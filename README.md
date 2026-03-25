@@ -19,7 +19,7 @@
 gioc organises dependencies into **modules**, resolves the full dependency graph at startup, and wires every provider in topological order — catching circular dependencies before your application runs.
 
 ```
-go get github.com/0x626f/go-react
+go get github.com/0x626f/gioc
 ```
 
 ---
@@ -43,7 +43,7 @@ package main
 
 import (
     "fmt"
-    "github.com/0x626f/go-react"
+    "github.com/0x626f/gioc"
 )
 
 type Config struct{ DSN string }
