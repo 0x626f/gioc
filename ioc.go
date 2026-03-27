@@ -113,7 +113,7 @@ func (container *IOContainer) initModules(modules ...*Module) (err error) {
 			Neighbors: func(provider IProvider) ([]IProvider, error) {
 				var providers []IProvider
 				for _, injection := range provider.Injections() {
-					observed := container.lookup(module, injection)
+					observed := container.lookup(provider.AssignedTo(), injection)
 					if observed == nil {
 						return nil, missingDependency(provider, injection)
 					}

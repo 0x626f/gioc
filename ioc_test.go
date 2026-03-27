@@ -362,11 +362,11 @@ func TestModule_MultipleImports(t *testing.T) {
 	app := NewModule("app")
 	app.Import(m1, m2)
 
-	if app.lookup(CreateToken[Logger]()) == nil {
-		t.Fatal("should find Logger from m1")
+	if app.lookup(CreateToken[Logger]()) != nil {
+		t.Fatal("should not find Logger from m1")
 	}
-	if app.lookup(CreateToken[Database]()) == nil {
-		t.Fatal("should find Database from m2")
+	if app.lookup(CreateToken[Database]()) != nil {
+		t.Fatal("should not find Database from m2")
 	}
 }
 
@@ -1925,12 +1925,12 @@ func TestContainer_MissingDependency_ErrorMentionsMissingToken(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Export flag: tracked in module.exports but NOT enforced by module.lookup.
-// All providers in a directly-imported module are accessible to the importer
-// regardless of the Exportable flag. The export map is metadata only.
+// Export flag: enforced by module.lookup.
+// Only providers marked as exportable are visible to importing modules.
+// Non-exported providers are hidden even from direct importers.
 // ---------------------------------------------------------------------------
 
-func TestModule_NonExportedProviderStillVisibleViaDirectImport(t *testing.T) {
+func TestModule_NonExportedProviderNotVisibleViaDirectImport(t *testing.T) {
 	infra := NewModule("infra")
 	// Logger is provided but NOT exported (false)
 	infra.Provide(ValueProvider[*Logger]("", &Logger{Prefix: "private"}, false))
@@ -1938,20 +1938,19 @@ func TestModule_NonExportedProviderStillVisibleViaDirectImport(t *testing.T) {
 	app := NewModule("app")
 	app.Import(infra)
 
-	// module.lookup does not enforce exports — provider IS accessible
+	// module.lookup enforces exports — non-exported provider is NOT accessible
 	found := app.lookup(CreateToken[Logger]())
-	if found == nil {
-		t.Fatal("all providers in a directly-imported module are accessible regardless of the export flag")
+	if found != nil {
+		t.Fatal("non-exported provider should not be visible to importing module")
 	}
 }
 
-func TestContainer_NonExportedDep_AccessibleWhenDirectlyImported(t *testing.T) {
+func TestContainer_NonExportedDep_NotAccessibleWhenDirectlyImported(t *testing.T) {
 	logToken := CreateToken[Logger]()
 
 	infra := NewModule("infra")
 	infra.Provide(ValueProvider[*Logger]("", &Logger{Prefix: "private"}, false /* not exported */))
 
-	var got *Logger
 	app := NewModule("app")
 	app.Import(infra)
 	app.Provide(FactoryProvider[*UserService]("", Factory[*UserService]{
@@ -1961,17 +1960,14 @@ func TestContainer_NonExportedDep_AccessibleWhenDirectlyImported(t *testing.T) {
 			if err != nil {
 				return nil, err
 			}
-			got = log
 			return &UserService{Log: log}, nil
 		},
 	}, false))
 
 	c := NewContainer()
 	c.AddModules(infra, app)
-	mustRun(t, c) // must succeed — export flag is not enforced at lookup level
-
-	if got == nil || got.Prefix != "private" {
-		t.Fatalf("expected private logger, got %v", got)
+	if err := c.Run(); err == nil {
+		t.Fatal("expected dependency error: non-exported provider should not be visible to importing module")
 	}
 }
 

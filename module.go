@@ -71,7 +71,9 @@ func (module *Module) lookup(token Token) IProvider {
 
 	for _, imp := range module.imports {
 		if provider, ok := imp.providers[token]; ok {
-			return provider
+			if _, exp := imp.exports[token]; exp {
+				return provider
+			}
 		}
 	}
 
