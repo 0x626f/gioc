@@ -109,6 +109,9 @@ func (container *IOContainer) lookup(module *Module, token Token) IProvider {
 // every provider in topological order via createObject.
 func (container *IOContainer) initModules(modules ...*Module) (err error) {
 	for _, module := range modules {
+		if err = container.initModules(module.imports...); err != nil {
+			return
+		}
 		err = dfs(module.providerList(), nodeConfig[IProvider]{
 			Neighbors: func(provider IProvider) ([]IProvider, error) {
 				var providers []IProvider
