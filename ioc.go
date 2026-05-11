@@ -14,8 +14,10 @@ type Container struct {
 	modules []*Module
 	globals []*Module
 
-	meta *metadata
-	load sync.Once
+	meta   *metadata
+	mu     sync.Mutex
+	ran    bool
+	runErr error
 }
 
 // NewContainer creates a new, empty Container ready to accept modules.
@@ -29,9 +31,18 @@ func NewContainer() *Container {
 }
 
 // AddModules registers one or more modules with the container.
-// Modules must be added before calling Run.
-func (container *Container) AddModules(modules ...*Module) {
+// Modules must be added before calling Run. It returns an error if registration
+// is attempted after Run has started.
+func (container *Container) AddModules(modules ...*Module) error {
+	container.mu.Lock()
+	defer container.mu.Unlock()
+
+	if container.ran {
+		return moduleRegistrationClosed()
+	}
+
 	container.modules = append(container.modules, modules...)
+	return nil
 }
 
 // Run wires the entire container:
@@ -49,47 +60,66 @@ func (container *Container) AddModules(modules ...*Module) {
 // or a constructor returns an error.
 // After a successful run the internal metadata is cleared.
 func (container *Container) Run() (err error) {
-	container.load.Do(func() {
-		err = container.validateModules()
-		if err != nil {
-			return
-		}
+	container.mu.Lock()
+	defer container.mu.Unlock()
 
-		err = dfs(container.modules, nodeConfig[*Module]{
-			Neighbors: func(module *Module) ([]*Module, error) {
-				return module.imports, nil
-			},
-			ShouldVisit: func(module *Module) bool {
-				return true
-			},
-			OnVisited: func(module *Module) error {
-				if module.global {
-					container.globals = append(container.globals, module)
-				}
-				return nil
-			},
-			OnCycle: func(chain []Token) error {
-				return circularModuleInjection(chain...)
-			},
-		})
+	if container.ran {
+		return container.runErr
+	}
+	container.ran = true
 
-		if err != nil {
-			return
-		}
+	defer func() {
+		container.runErr = err
+	}()
 
-		err = container.initModules(container.globals...)
-		if err != nil {
-			return
-		}
+	err = container.validateModules()
+	if err != nil {
+		return
+	}
 
-		err = container.initModules(container.modules...)
-		if err != nil {
-			return
-		}
-
-		container.meta.loaded = nil
+	err = dfs(container.modules, nodeConfig[*Module]{
+		Neighbors: func(module *Module) ([]*Module, error) {
+			return module.imports, nil
+		},
+		ShouldVisit: func(module *Module) bool {
+			return true
+		},
+		OnVisited: func(module *Module) error {
+			if module.global {
+				container.globals = append(container.globals, module)
+			}
+			return nil
+		},
+		OnCycle: func(chain []Token) error {
+			return circularModuleInjection(chain...)
+		},
 	})
+
+	if err != nil {
+		return
+	}
+
+	err = container.initModules(container.globals...)
+	if err != nil {
+		return
+	}
+
+	err = container.initModules(container.modules...)
+	if err != nil {
+		return
+	}
+
+	container.meta.loaded = nil
 	return
+}
+
+func (container *Container) cached(provider IProvider) (*Injectable, bool) {
+	injection, ok := container.meta.instances[provider]
+	return injection, ok
+}
+
+func (container *Container) cache(provider IProvider, injection *Injectable) {
+	container.meta.instances[provider] = injection
 }
 
 // Resolve returns the provider instance visible from the given module contexts.
@@ -97,6 +127,13 @@ func (container *Container) Run() (err error) {
 // validated. If no modules are provided, Resolve searches the container's root
 // modules in registration order. The first module that can see the token wins.
 func (container *Container) Resolve(token Token, modules ...*Module) (*Injectable, error) {
+	container.mu.Lock()
+	defer container.mu.Unlock()
+
+	if !(container.ran && container.runErr == nil) {
+		return nil, containerNotReady()
+	}
+
 	if len(modules) == 0 {
 		modules = container.modules
 	}
@@ -119,8 +156,8 @@ func (container *Container) Resolve(token Token, modules ...*Module) (*Injectabl
 
 // lookup resolves a token for the given module context. It first searches the
 // module's own providers and direct imports; if nothing is found it falls
-// through to each global module in registration order, stopping as soon as
-// the current module is reached in the globals list.
+// through to each global module in registration order, skipping the current
+// module if it is itself global.
 func (container *Container) lookup(module *Module, token Token) IProvider {
 	if module == nil {
 		return nil
@@ -133,7 +170,7 @@ func (container *Container) lookup(module *Module, token Token) IProvider {
 
 	for _, global := range container.globals {
 		if global.token == module.token {
-			break
+			continue
 		}
 
 		observed = global.lookup(token)
@@ -159,6 +196,9 @@ func (container *Container) validateModules() error {
 			if module == nil {
 				return nil, nilModule()
 			}
+			if module.err != nil {
+				return nil, module.err
+			}
 			for _, imp := range module.imports {
 				if err := observeModuleToken(byToken, imp); err != nil {
 					return nil, err
@@ -181,6 +221,9 @@ func (container *Container) validateModules() error {
 func observeModuleToken(byToken map[Token]*Module, module *Module) error {
 	if module == nil {
 		return nilModule()
+	}
+	if module.err != nil {
+		return module.err
 	}
 
 	if existing, ok := byToken[module.Token()]; ok && existing != module {
@@ -244,6 +287,30 @@ func (container *Container) initModules(modules ...*Module) (err error) {
 // createObject recursively resolves all declared dependencies of the provider
 // and calls its Create method with the fully-built injection list.
 func (container *Container) createObject(provider IProvider) (*Injectable, error) {
+	return container.createObjectWithPath(provider, nil, nil)
+}
+
+func (container *Container) createObjectWithPath(provider IProvider, path map[IProvider]struct{}, tokens []Token) (*Injectable, error) {
+	if provider == nil {
+		return nil, nilProvider()
+	}
+
+	if _, ok := path[provider]; ok {
+		return nil, circularDependencyInjection(append(tokens, provider.Token())...)
+	}
+
+	if provider.Scope() == Singleton {
+		if built, ok := container.cached(provider); ok {
+			return built, nil
+		}
+	}
+
+	if path == nil {
+		path = make(map[IProvider]struct{})
+	}
+	path[provider] = struct{}{}
+	tokens = append(tokens, provider.Token())
+	defer delete(path, provider)
 
 	var err error
 	var injections []*Injectable
@@ -255,7 +322,7 @@ func (container *Container) createObject(provider IProvider) (*Injectable, error
 			return nil, missingDependency(provider, injection)
 		}
 
-		built, err = container.createObject(observed)
+		built, err = container.createObjectWithPath(observed, path, tokens)
 		if err != nil {
 			return nil, err
 		}
@@ -268,8 +335,8 @@ func (container *Container) createObject(provider IProvider) (*Injectable, error
 		return nil, err
 	}
 
-	if _, ok := container.meta.instances[provider]; !ok {
-		container.meta.instances[provider] = built
+	if provider.Scope() == Singleton {
+		container.cache(provider, built)
 	}
 
 	return built, nil

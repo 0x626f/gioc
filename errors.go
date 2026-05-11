@@ -83,6 +83,30 @@ func nilModule() *DependencyError {
 	}
 }
 
+func nilProvider() *DependencyError {
+	return &DependencyError{
+		reason: "provider is nil",
+	}
+}
+
+func providerAlreadyAssigned(token Token, current Token, next Token) *DependencyError {
+	return &DependencyError{
+		reason: fmt.Sprintf("provider %s is already assigned to module %s and cannot be assigned to module %s", token, current, next),
+	}
+}
+
+func moduleRegistrationClosed() *DependencyError {
+	return &DependencyError{
+		reason: "modules cannot be added after Run has been called",
+	}
+}
+
+func containerNotReady() *DependencyError {
+	return &DependencyError{
+		reason: "container must Run successfully before Resolve can be called",
+	}
+}
+
 func duplicateModuleToken(token Token) *DependencyError {
 	return &DependencyError{
 		reason: fmt.Sprintf("module token %s is registered more than once", token),

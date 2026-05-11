@@ -10,6 +10,7 @@ type Module struct {
 	imports   []*Module
 	exports   map[Token]struct{}
 	providers map[Token]IProvider
+	err       error
 }
 
 // NewModule creates a new, empty module identified by the given token.
@@ -51,9 +52,21 @@ func (module *Module) Import(modules ...*Module) *Module {
 // Returns the module itself for chaining.
 func (module *Module) Provide(providers ...IProvider) *Module {
 	for _, provider := range providers {
+		if provider == nil {
+			module.err = nilProvider()
+			continue
+		}
+
 		token := provider.Token()
+		if assigned := provider.AssignedTo(); assigned != nil && assigned != module {
+			module.err = providerAlreadyAssigned(token, assigned.Token(), module.Token())
+			continue
+		}
+
 		if provider.Exportable() {
 			module.exports[token] = struct{}{}
+		} else {
+			delete(module.exports, token)
 		}
 		module.providers[token] = provider
 		provider.AssignOn(module)

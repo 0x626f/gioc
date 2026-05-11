@@ -1,5 +1,7 @@
 package gioc
 
+import "sync"
+
 // IProvider is the common interface implemented by all provider types.
 // A provider encapsulates the construction logic for a single dependency and
 // carries metadata (token, scope, exportability) used by the container during
@@ -36,10 +38,11 @@ type IProvider interface {
 // It always has Singleton scope — every call to Create returns the same
 // underlying value.
 type ValueProviderInjection[T any] struct {
-	Key    Token
-	Export bool
-	Value  T
-	module *Module
+	Key       Token
+	Export    bool
+	Value     T
+	module    *Module
+	tokenOnce sync.Once
 }
 
 // ValueProvider creates a provider that serves the given value as-is, without
@@ -58,9 +61,11 @@ func ValueProvider[T any](token Token, value T, exportable bool) *ValueProviderI
 // Token returns the provider's token, deriving it from the type parameter when
 // the Key field is empty.
 func (provider *ValueProviderInjection[T]) Token() Token {
-	if provider.Key == "" {
-		provider.Key = CreateToken[T]()
-	}
+	provider.tokenOnce.Do(func() {
+		if provider.Key == "" {
+			provider.Key = CreateToken[T]()
+		}
+	})
 	return provider.Key
 }
 
@@ -119,11 +124,12 @@ type Factory[T any] struct {
 // For Singleton scope the instance is created once and cached; for Prototype
 // scope the constructor is invoked on every Create call.
 type FactoryProviderInjection[T any] struct {
-	Key      Token
-	Export   bool
-	Factory  Factory[T]
-	instance *Injectable
-	module   *Module
+	Key       Token
+	Export    bool
+	Factory   Factory[T]
+	instance  *Injectable
+	module    *Module
+	tokenOnce sync.Once
 }
 
 // FactoryProvider creates a provider that constructs its instance via the
@@ -150,9 +156,11 @@ func FactoryProvider[T any](token Token, factory Factory[T], exportable bool) *F
 // Token returns the provider's token, deriving it from the type parameter when
 // the Key field is empty.
 func (provider *FactoryProviderInjection[T]) Token() Token {
-	if provider.Key == "" {
-		provider.Key = CreateToken[T]()
-	}
+	provider.tokenOnce.Do(func() {
+		if provider.Key == "" {
+			provider.Key = CreateToken[T]()
+		}
+	})
 	return provider.Key
 }
 

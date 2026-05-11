@@ -3,6 +3,7 @@ package gioc
 import (
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -10,6 +11,52 @@ type Logger struct{ Prefix string }
 type Database struct{ DSN string }
 type Cache struct{ Addr string }
 type Config struct{ Env string }
+
+type nonCachingSingletonProvider struct {
+	token  Token
+	calls  int
+	mu     sync.Mutex
+	module *Module
+}
+
+func (provider *nonCachingSingletonProvider) Token() Token {
+	return provider.token
+}
+
+func (provider *nonCachingSingletonProvider) Injections() []Token {
+	return nil
+}
+
+func (provider *nonCachingSingletonProvider) Create(...*Injectable) (*Injectable, error) {
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+
+	provider.calls++
+	return &Injectable{Token: provider.token, Instance: &Logger{Prefix: "custom"}}, nil
+}
+
+func (provider *nonCachingSingletonProvider) Exportable() bool {
+	return false
+}
+
+func (provider *nonCachingSingletonProvider) Scope() Scope {
+	return Singleton
+}
+
+func (provider *nonCachingSingletonProvider) AssignOn(module *Module) {
+	provider.module = module
+}
+
+func (provider *nonCachingSingletonProvider) AssignedTo() *Module {
+	return provider.module
+}
+
+func (provider *nonCachingSingletonProvider) Calls() int {
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+
+	return provider.calls
+}
 
 type UserService struct {
 	Log *Logger
@@ -480,6 +527,55 @@ func TestModule_DuplicateTokenOverwrites(t *testing.T) {
 	}
 }
 
+func TestModule_DuplicateTokenClearsExportWhenReplacementIsPrivate(t *testing.T) {
+	infra := NewModule("infra")
+	infra.Provide(ValueProvider[*Logger]("", &Logger{Prefix: "public"}, true))
+	infra.Provide(ValueProvider[*Logger]("", &Logger{Prefix: "private"}, false))
+
+	app := NewModule("app")
+	app.Import(infra)
+
+	if found := app.lookup(CreateToken[Logger]()); found != nil {
+		t.Fatal("replacement provider should not inherit the previous export flag")
+	}
+}
+
+func TestModule_ProvideNilReturnsRunError(t *testing.T) {
+	mod := NewModule("app")
+	mod.Provide(nil)
+
+	c := NewContainer()
+	if err := c.AddModules(mod); err != nil {
+		t.Fatalf("unexpected AddModules error: %v", err)
+	}
+
+	if err := c.Run(); err == nil {
+		t.Fatal("expected nil provider registration error")
+	}
+}
+
+func TestModule_SameProviderCannotBeAssignedToMultipleModules(t *testing.T) {
+	provider := ValueProvider[*Logger]("", &Logger{Prefix: "shared"}, true)
+
+	first := NewModule("first")
+	first.Provide(provider)
+
+	second := NewModule("second")
+	second.Provide(provider)
+
+	c := NewContainer()
+	if err := c.AddModules(first, second); err != nil {
+		t.Fatalf("unexpected AddModules error: %v", err)
+	}
+
+	if err := c.Run(); err == nil {
+		t.Fatal("expected provider assignment error")
+	}
+	if provider.AssignedTo() != first {
+		t.Fatal("provider should remain assigned to the original module")
+	}
+}
+
 func TestContainer_SimpleObjectProviders(t *testing.T) {
 	c := NewContainer()
 	mod := NewModule("app")
@@ -510,6 +606,49 @@ func TestContainer_RunCanBeCalledTwice(t *testing.T) {
 
 	mustRun(t, c)
 	mustRun(t, c)
+}
+
+func TestContainer_AddModulesAfterRunReturnsErrorAndDoesNotRegister(t *testing.T) {
+	c := NewContainer()
+	first := NewModule("first")
+	first.Provide(ValueProvider[*Logger]("", &Logger{Prefix: "first"}, false))
+	c.AddModules(first)
+	mustRun(t, c)
+
+	second := NewModule("second")
+	second.Provide(ValueProvider[*Database]("", &Database{DSN: "late"}, false))
+	if err := c.AddModules(second); err == nil {
+		t.Fatal("expected AddModules to reject registration after Run")
+	}
+
+	if _, err := c.Resolve(CreateToken[Database]()); err == nil {
+		t.Fatal("late module should not be visible to Resolve")
+	}
+}
+
+func TestContainer_RunFailureIsReturnedOnSubsequentRun(t *testing.T) {
+	mod := NewModule("app")
+	mod.Provide(FactoryProvider[*UserService]("", Factory[*UserService]{
+		Injects: Inject("missing"),
+		Constructor: func(deps ...*Injectable) (*UserService, error) {
+			return &UserService{}, nil
+		},
+	}, false))
+
+	c := NewContainer()
+	c.AddModules(mod)
+
+	firstErr := c.Run()
+	if firstErr == nil {
+		t.Fatal("expected first Run to fail")
+	}
+	secondErr := c.Run()
+	if secondErr == nil {
+		t.Fatal("expected second Run to return the stored failure")
+	}
+	if secondErr.Error() != firstErr.Error() {
+		t.Fatalf("expected same failure on second Run, got %v then %v", firstErr, secondErr)
+	}
 }
 
 func TestContainer_MultipleModulesNoImport(t *testing.T) {
@@ -766,6 +905,108 @@ func TestContainer_ResolveReturnsCreatedInstanceAfterRun(t *testing.T) {
 	}
 }
 
+func TestContainer_ResolveValueProviderUsesContainerSingletonCache(t *testing.T) {
+	logToken := CreateToken[Logger]()
+
+	c := NewContainer()
+	mod := NewModule("app")
+	mod.Provide(ValueProvider[*Logger]("", &Logger{Prefix: "cached"}, false))
+	c.AddModules(mod)
+	mustRun(t, c)
+
+	first, err := c.Resolve(logToken, mod)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	second, err := c.Resolve(logToken, mod)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if first != second {
+		t.Fatal("singleton ValueProvider should return the cached Injectable wrapper")
+	}
+}
+
+func TestContainer_ResolveCustomSingletonUsesContainerCache(t *testing.T) {
+	provider := &nonCachingSingletonProvider{token: "CustomSingleton"}
+	mod := NewModule("app")
+	mod.Provide(provider)
+
+	c := NewContainer()
+	c.AddModules(mod)
+	mustRun(t, c)
+
+	first, err := c.Resolve(provider.Token(), mod)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	second, err := c.Resolve(provider.Token(), mod)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if first != second {
+		t.Fatal("container should enforce singleton identity for custom providers")
+	}
+	if provider.Calls() != 1 {
+		t.Fatalf("custom singleton Create should be called once, got %d", provider.Calls())
+	}
+}
+
+func TestContainer_ResolveSingletonIsConcurrentSafe(t *testing.T) {
+	logToken := CreateToken[Logger]()
+	calls := 0
+	var callsMu sync.Mutex
+
+	c := NewContainer()
+	mod := NewModule("app")
+	mod.Provide(FactoryProvider[*Logger]("", Factory[*Logger]{
+		ValueScope: Singleton,
+		Constructor: func(deps ...*Injectable) (*Logger, error) {
+			callsMu.Lock()
+			defer callsMu.Unlock()
+
+			calls++
+			return &Logger{Prefix: "created"}, nil
+		},
+	}, false))
+	c.AddModules(mod)
+	mustRun(t, c)
+
+	const workers = 32
+	var wg sync.WaitGroup
+	results := make([]*Injectable, workers)
+	errs := make([]error, workers)
+
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			results[i], errs[i] = c.Resolve(logToken, mod)
+		}()
+	}
+	wg.Wait()
+
+	for _, err := range errs {
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	for i := 1; i < workers; i++ {
+		if results[i] != results[0] {
+			t.Fatal("all concurrent singleton Resolve calls should return the same Injectable")
+		}
+	}
+
+	callsMu.Lock()
+	defer callsMu.Unlock()
+	if calls != 1 {
+		t.Fatalf("factory should be called once, got %d", calls)
+	}
+}
+
 func TestContainer_ResolvePrototypeCreatesNewInstance(t *testing.T) {
 	logToken := CreateToken[Logger]()
 	calls := 0
@@ -1001,6 +1242,38 @@ func TestCircularProviderDependency_TwoWay(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "circular") {
 		t.Fatalf("expected 'circular' in error, got: %v", err)
+	}
+}
+
+func TestContainer_ResolveBeforeRunReturnsNotReady(t *testing.T) {
+	tokenA := "ServiceA"
+	tokenB := "ServiceB"
+
+	mod := NewModule("app")
+	mod.Provide(
+		FactoryProvider[*ServiceA](tokenA, Factory[*ServiceA]{
+			Injects: Inject(tokenB),
+			Constructor: func(deps ...*Injectable) (*ServiceA, error) {
+				return &ServiceA{}, nil
+			},
+		}, false),
+		FactoryProvider[*ServiceB](tokenB, Factory[*ServiceB]{
+			Injects: Inject(tokenA),
+			Constructor: func(deps ...*Injectable) (*ServiceB, error) {
+				return &ServiceB{}, nil
+			},
+		}, false),
+	)
+
+	c := NewContainer()
+	c.AddModules(mod)
+
+	_, err := c.Resolve(tokenA, mod)
+	if err == nil {
+		t.Fatal("expected error before Run")
+	}
+	if !strings.Contains(err.Error(), "Run successfully") {
+		t.Fatalf("expected not-ready error, got: %v", err)
 	}
 }
 
@@ -2378,6 +2651,39 @@ func TestContainer_MultipleGlobalModules_BothAccessible(t *testing.T) {
 	}
 	if gotDB.DSN != "global-pg" {
 		t.Fatalf("expected DSN global-pg, got %s", gotDB.DSN)
+	}
+}
+
+func TestContainer_GlobalModuleCanResolveLaterGlobalModule(t *testing.T) {
+	logToken := CreateToken[Logger]()
+	dbToken := CreateToken[Database]()
+
+	firstGlobal := NewModule("first-global").Global()
+	var gotLog *Logger
+	firstGlobal.Provide(FactoryProvider[*Database](dbToken, Factory[*Database]{
+		Injects: Inject(logToken),
+		Constructor: func(deps ...*Injectable) (*Database, error) {
+			log, err := ResolveFrom[*Logger](logToken, deps)
+			if err != nil {
+				return nil, err
+			}
+			gotLog = log
+			return &Database{DSN: "from-first"}, nil
+		},
+	}, true))
+
+	secondGlobal := NewModule("second-global").Global()
+	secondGlobal.Provide(ValueProvider[*Logger]("", &Logger{Prefix: "later"}, true))
+
+	c := NewContainer()
+	c.AddModules(firstGlobal, secondGlobal)
+	mustRun(t, c)
+
+	if gotLog == nil {
+		t.Fatal("earlier global module should resolve providers from later global modules")
+	}
+	if gotLog.Prefix != "later" {
+		t.Fatalf("expected later global logger, got %s", gotLog.Prefix)
 	}
 }
 
