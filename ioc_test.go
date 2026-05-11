@@ -522,6 +522,40 @@ func TestContainer_MultipleModulesNoImport(t *testing.T) {
 	mustRun(t, c)
 }
 
+func TestContainer_DuplicateModuleTokensReturnError(t *testing.T) {
+	first := NewModule("app")
+	first.Provide(ValueProvider[*Logger]("", &Logger{}, false))
+
+	second := NewModule("app")
+	second.Provide(ValueProvider[*Database]("", &Database{}, false))
+
+	c := NewContainer()
+	c.AddModules(first, second)
+
+	err := c.Run()
+	if err == nil {
+		t.Fatal("expected duplicate module token error")
+	}
+	if !strings.Contains(err.Error(), "registered more than once") {
+		t.Fatalf("expected duplicate module token message, got: %v", err)
+	}
+}
+
+func TestContainer_DuplicateImportedModuleTokensReturnError(t *testing.T) {
+	sharedA := NewModule("shared")
+	sharedB := NewModule("shared")
+
+	app := NewModule("app")
+	app.Import(sharedA, sharedB)
+
+	c := NewContainer()
+	c.AddModules(app)
+
+	if err := c.Run(); err == nil {
+		t.Fatal("expected duplicate imported module token error")
+	}
+}
+
 func TestContainer_ImportedModuleInitializedOnce(t *testing.T) {
 	calls := 0
 
@@ -614,6 +648,166 @@ func TestContainer_LookupMissing(t *testing.T) {
 	found := c.lookup(mod, "does-not-exist")
 	if found != nil {
 		t.Fatal("should return nil for unknown token")
+	}
+}
+
+func TestContainer_LookupNilModuleReturnsNil(t *testing.T) {
+	c := NewContainer()
+
+	found := c.lookup(nil, "Logger")
+	if found != nil {
+		t.Fatal("nil module lookup should return nil")
+	}
+}
+
+func TestContainer_ResolveAfterRun(t *testing.T) {
+	logToken := CreateToken[Logger]()
+
+	c := NewContainer()
+	mod := NewModule("app")
+	mod.Provide(ValueProvider[*Logger]("", &Logger{Prefix: "resolved"}, false))
+	c.AddModules(mod)
+	mustRun(t, c)
+
+	inj, err := c.Resolve(logToken, mod)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	log, err := Resolve[*Logger](inj)
+	if err != nil {
+		t.Fatalf("unexpected resolve error: %v", err)
+	}
+	if log.Prefix != "resolved" {
+		t.Fatalf("expected resolved, got %s", log.Prefix)
+	}
+}
+
+func TestContainer_ResolveWithoutModulesSearchesRootModules(t *testing.T) {
+	logToken := CreateToken[Logger]()
+
+	c := NewContainer()
+	mod := NewModule("app")
+	mod.Provide(ValueProvider[*Logger]("", &Logger{Prefix: "root"}, false))
+	c.AddModules(mod)
+	mustRun(t, c)
+
+	inj, err := c.Resolve(logToken)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	log, err := Resolve[*Logger](inj)
+	if err != nil {
+		t.Fatalf("unexpected resolve error: %v", err)
+	}
+	if log.Prefix != "root" {
+		t.Fatalf("expected root, got %s", log.Prefix)
+	}
+}
+
+func TestContainer_ResolveUsesFirstMatchingModule(t *testing.T) {
+	logToken := CreateToken[Logger]()
+
+	first := NewModule("first")
+	first.Provide(ValueProvider[*Logger]("", &Logger{Prefix: "first"}, false))
+
+	second := NewModule("second")
+	second.Provide(ValueProvider[*Logger]("", &Logger{Prefix: "second"}, false))
+
+	c := NewContainer()
+	c.AddModules(first, second)
+	mustRun(t, c)
+
+	inj, err := c.Resolve(logToken, second, first)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	log, err := Resolve[*Logger](inj)
+	if err != nil {
+		t.Fatalf("unexpected resolve error: %v", err)
+	}
+	if log.Prefix != "second" {
+		t.Fatalf("expected second module to win, got %s", log.Prefix)
+	}
+}
+
+func TestContainer_ResolveReturnsCreatedInstanceAfterRun(t *testing.T) {
+	logToken := CreateToken[Logger]()
+	calls := 0
+
+	c := NewContainer()
+	mod := NewModule("app")
+	mod.Provide(FactoryProvider[*Logger]("", Factory[*Logger]{
+		Constructor: func(deps ...*Injectable) (*Logger, error) {
+			calls++
+			return &Logger{Prefix: "created"}, nil
+		},
+	}, false))
+	c.AddModules(mod)
+	mustRun(t, c)
+
+	if calls != 1 {
+		t.Fatalf("expected factory to run once during Run, got %d", calls)
+	}
+
+	first, err := c.Resolve(logToken, mod)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	second, err := c.Resolve(logToken, mod)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if first != second {
+		t.Fatal("Resolve should return the cached Injectable created during Run")
+	}
+	if calls != 1 {
+		t.Fatalf("Resolve should not recreate the factory instance, got %d calls", calls)
+	}
+}
+
+func TestContainer_ResolvePrototypeCreatesNewInstance(t *testing.T) {
+	logToken := CreateToken[Logger]()
+	calls := 0
+
+	c := NewContainer()
+	mod := NewModule("app")
+	mod.Provide(FactoryProvider[*Logger]("", Factory[*Logger]{
+		ValueScope: Prototype,
+		Constructor: func(deps ...*Injectable) (*Logger, error) {
+			calls++
+			return &Logger{Prefix: "created"}, nil
+		},
+	}, false))
+	c.AddModules(mod)
+	mustRun(t, c)
+
+	if calls != 1 {
+		t.Fatalf("expected prototype factory to run once during Run, got %d", calls)
+	}
+
+	first, err := c.Resolve(logToken, mod)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	second, err := c.Resolve(logToken, mod)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if first == second {
+		t.Fatal("prototype Resolve should return a fresh Injectable")
+	}
+	if calls != 3 {
+		t.Fatalf("expected prototype factory to run during each Resolve, got %d calls", calls)
+	}
+}
+
+func TestContainer_ResolveNilModuleReturnsError(t *testing.T) {
+	c := NewContainer()
+
+	if _, err := c.Resolve("Logger", nil); err == nil {
+		t.Fatal("expected error for nil module")
 	}
 }
 

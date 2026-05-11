@@ -3,7 +3,8 @@ package gioc
 import "sync"
 
 type metadata struct {
-	loaded map[*Module]struct{}
+	loaded    map[*Module]struct{}
+	instances map[IProvider]*Injectable
 }
 
 // Container is the top-level dependency injection container.
@@ -21,7 +22,8 @@ type Container struct {
 func NewContainer() *Container {
 	return &Container{
 		meta: &metadata{
-			loaded: make(map[*Module]struct{}),
+			loaded:    make(map[*Module]struct{}),
+			instances: make(map[IProvider]*Injectable),
 		},
 	}
 }
@@ -48,6 +50,10 @@ func (container *Container) AddModules(modules ...*Module) {
 // After a successful run the internal metadata is cleared.
 func (container *Container) Run() (err error) {
 	container.load.Do(func() {
+		err = container.validateModules()
+		if err != nil {
+			return
+		}
 
 		err = dfs(container.modules, nodeConfig[*Module]{
 			Neighbors: func(module *Module) ([]*Module, error) {
@@ -81,9 +87,34 @@ func (container *Container) Run() (err error) {
 			return
 		}
 
-		container.meta = nil
+		container.meta.loaded = nil
 	})
 	return
+}
+
+// Resolve returns the provider instance visible from the given module contexts.
+// Call Run before using Resolve so the dependency graph has already been
+// validated. If no modules are provided, Resolve searches the container's root
+// modules in registration order. The first module that can see the token wins.
+func (container *Container) Resolve(token Token, modules ...*Module) (*Injectable, error) {
+	if len(modules) == 0 {
+		modules = container.modules
+	}
+
+	for _, module := range modules {
+		if module == nil {
+			return nil, nilModule()
+		}
+
+		provider := container.lookup(module, token)
+		if provider == nil {
+			continue
+		}
+
+		return container.createObject(provider)
+	}
+
+	return nil, missingInjection(token, nil)
 }
 
 // lookup resolves a token for the given module context. It first searches the
@@ -91,6 +122,10 @@ func (container *Container) Run() (err error) {
 // through to each global module in registration order, stopping as soon as
 // the current module is reached in the globals list.
 func (container *Container) lookup(module *Module, token Token) IProvider {
+	if module == nil {
+		return nil
+	}
+
 	observed := module.lookup(token)
 	if observed != nil {
 		return observed
@@ -107,6 +142,51 @@ func (container *Container) lookup(module *Module, token Token) IProvider {
 			return observed
 		}
 	}
+	return nil
+}
+
+func (container *Container) validateModules() error {
+	byToken := make(map[Token]*Module)
+
+	for _, module := range container.modules {
+		if err := observeModuleToken(byToken, module); err != nil {
+			return err
+		}
+	}
+
+	return dfs(container.modules, nodeConfig[*Module]{
+		Neighbors: func(module *Module) ([]*Module, error) {
+			if module == nil {
+				return nil, nilModule()
+			}
+			for _, imp := range module.imports {
+				if err := observeModuleToken(byToken, imp); err != nil {
+					return nil, err
+				}
+			}
+			return module.imports, nil
+		},
+		ShouldVisit: func(module *Module) bool {
+			return true
+		},
+		OnVisited: func(module *Module) error {
+			return observeModuleToken(byToken, module)
+		},
+		OnCycle: func(chain []Token) error {
+			return nil
+		},
+	})
+}
+
+func observeModuleToken(byToken map[Token]*Module, module *Module) error {
+	if module == nil {
+		return nilModule()
+	}
+
+	if existing, ok := byToken[module.Token()]; ok && existing != module {
+		return duplicateModuleToken(module.Token())
+	}
+	byToken[module.Token()] = module
 	return nil
 }
 
@@ -183,5 +263,14 @@ func (container *Container) createObject(provider IProvider) (*Injectable, error
 		injections = append(injections, built)
 	}
 
-	return provider.Create(injections...)
+	built, err := provider.Create(injections...)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, ok := container.meta.instances[provider]; !ok {
+		container.meta.instances[provider] = built
+	}
+
+	return built, nil
 }

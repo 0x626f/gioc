@@ -77,6 +77,18 @@ func nilInjection() *DependencyError {
 	}
 }
 
+func nilModule() *DependencyError {
+	return &DependencyError{
+		reason: "module is nil",
+	}
+}
+
+func duplicateModuleToken(token Token) *DependencyError {
+	return &DependencyError{
+		reason: fmt.Sprintf("module token %s is registered more than once", token),
+	}
+}
+
 func missingInjection(token Token, injections []*Injectable) *DependencyError {
 	return &DependencyError{
 		reason: fmt.Sprintf("injection %s is missing in the scope: %v", token, injections),

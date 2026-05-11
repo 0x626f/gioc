@@ -212,6 +212,18 @@ Constructor: func(deps ...*gioc.Injectable) (*Service, error) {
 db, err := gioc.Resolve[*Database](inj)
 ```
 
+### Container.Resolve — fetch a provider after Run
+
+Singleton providers return the instance created during `Run`; prototype providers create a fresh instance for each call.
+
+```go
+inj, err := c.Resolve("Database", appMod)
+if err != nil {
+    return err
+}
+db, err := gioc.Resolve[*Database](inj)
+```
+
 ### Require — panic-guard at the top of a constructor
 
 ```go
