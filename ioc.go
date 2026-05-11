@@ -1,22 +1,25 @@
 package gioc
 
+import "sync"
+
 type metadata struct {
 	loaded map[*Module]struct{}
 }
 
-// IOContainer is the top-level dependency injection container.
+// Container is the top-level dependency injection container.
 // It owns a set of modules, resolves their dependency graph, and instantiates
 // all providers in the correct topological order when Run is called.
-type IOContainer struct {
+type Container struct {
 	modules []*Module
 	globals []*Module
 
 	meta *metadata
+	load sync.Once
 }
 
-// NewContainer creates a new, empty IOContainer ready to accept modules.
-func NewContainer() *IOContainer {
-	return &IOContainer{
+// NewContainer creates a new, empty Container ready to accept modules.
+func NewContainer() *Container {
+	return &Container{
 		meta: &metadata{
 			loaded: make(map[*Module]struct{}),
 		},
@@ -25,7 +28,7 @@ func NewContainer() *IOContainer {
 
 // AddModules registers one or more modules with the container.
 // Modules must be added before calling Run.
-func (container *IOContainer) AddModules(modules ...*Module) {
+func (container *Container) AddModules(modules ...*Module) {
 	container.modules = append(container.modules, modules...)
 }
 
@@ -43,49 +46,51 @@ func (container *IOContainer) AddModules(modules ...*Module) {
 // provider graph, or a [DependencyError] if a required dependency is missing
 // or a constructor returns an error.
 // After a successful run the internal metadata is cleared.
-func (container *IOContainer) Run() (err error) {
-	err = dfs(container.modules, nodeConfig[*Module]{
-		Neighbors: func(module *Module) ([]*Module, error) {
-			return module.imports, nil
-		},
-		ShouldVisit: func(module *Module) bool {
-			return true
-		},
-		OnVisited: func(module *Module) error {
-			if module.global {
-				container.globals = append(container.globals, module)
-			}
-			return nil
-		},
-		OnCycle: func(chain []Token) error {
-			return circularModuleInjection(chain...)
-		},
+func (container *Container) Run() (err error) {
+	container.load.Do(func() {
+
+		err = dfs(container.modules, nodeConfig[*Module]{
+			Neighbors: func(module *Module) ([]*Module, error) {
+				return module.imports, nil
+			},
+			ShouldVisit: func(module *Module) bool {
+				return true
+			},
+			OnVisited: func(module *Module) error {
+				if module.global {
+					container.globals = append(container.globals, module)
+				}
+				return nil
+			},
+			OnCycle: func(chain []Token) error {
+				return circularModuleInjection(chain...)
+			},
+		})
+
+		if err != nil {
+			return
+		}
+
+		err = container.initModules(container.globals...)
+		if err != nil {
+			return
+		}
+
+		err = container.initModules(container.modules...)
+		if err != nil {
+			return
+		}
+
+		container.meta = nil
 	})
-
-	if err != nil {
-		return err
-	}
-
-	err = container.initModules(container.globals...)
-	if err != nil {
-		return err
-	}
-
-	err = container.initModules(container.modules...)
-	if err != nil {
-		return err
-	}
-
-	container.meta = nil
-
-	return nil
+	return
 }
 
 // lookup resolves a token for the given module context. It first searches the
 // module's own providers and direct imports; if nothing is found it falls
 // through to each global module in registration order, stopping as soon as
 // the current module is reached in the globals list.
-func (container *IOContainer) lookup(module *Module, token Token) IProvider {
+func (container *Container) lookup(module *Module, token Token) IProvider {
 	observed := module.lookup(token)
 	if observed != nil {
 		return observed
@@ -107,11 +112,19 @@ func (container *IOContainer) lookup(module *Module, token Token) IProvider {
 
 // initModules runs the provider dependency DFS for each module and instantiates
 // every provider in topological order via createObject.
-func (container *IOContainer) initModules(modules ...*Module) (err error) {
+func (container *Container) initModules(modules ...*Module) (err error) {
 	for _, module := range modules {
+		if _, ok := container.meta.loaded[module]; ok {
+			continue
+		}
+
 		if err = container.initModules(module.imports...); err != nil {
 			return
 		}
+		if _, ok := container.meta.loaded[module]; ok {
+			continue
+		}
+
 		err = dfs(module.providerList(), nodeConfig[IProvider]{
 			Neighbors: func(provider IProvider) ([]IProvider, error) {
 				var providers []IProvider
@@ -142,13 +155,15 @@ func (container *IOContainer) initModules(modules ...*Module) (err error) {
 		if err != nil {
 			return err
 		}
+
+		container.meta.loaded[module] = struct{}{}
 	}
 	return
 }
 
 // createObject recursively resolves all declared dependencies of the provider
 // and calls its Create method with the fully-built injection list.
-func (container *IOContainer) createObject(provider IProvider) (*Injectable, error) {
+func (container *Container) createObject(provider IProvider) (*Injectable, error) {
 
 	var err error
 	var injections []*Injectable

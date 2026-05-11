@@ -26,6 +26,10 @@ func Inject(injections ...Token) []Token {
 //
 //	svc, err := Resolve[*MyService](inj)
 func Resolve[T any](injection *Injectable) (T, error) {
+	if injection == nil {
+		return zero[T](), nilInjection()
+	}
+
 	val, ok := injection.Instance.(T)
 	if !ok {
 		return zero[T](), invalidInjectionType[T](injection.Token, injection.Instance)
@@ -42,6 +46,10 @@ func Resolve[T any](injection *Injectable) (T, error) {
 //	db, err := ResolveFrom[*Database]("Database", deps)
 func ResolveFrom[T any](token Token, injections []*Injectable) (T, error) {
 	for _, injection := range injections {
+		if injection == nil {
+			return zero[T](), nilInjection()
+		}
+
 		if token == injection.Token {
 			val, ok := injection.Instance.(T)
 			if !ok {
@@ -61,6 +69,9 @@ func ResolveFrom[T any](token Token, injections []*Injectable) (T, error) {
 func Require(injections []*Injectable, tokens ...Token) {
 	summary := make(map[string]struct{}, len(injections))
 	for _, injection := range injections {
+		if injection == nil {
+			panic(nilInjection())
+		}
 		summary[injection.Token] = struct{}{}
 	}
 

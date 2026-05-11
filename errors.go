@@ -10,25 +10,27 @@ const (
 	circularDependencyErrorRoot = "dependency"
 )
 
-// CircularInjectionError is returned by IOContainer.Run when the container
+// CircularInjectionError is returned by Container.Run when the container
 // detects a cycle in either the module import graph or the provider dependency
 // graph. The Tokens field contains the full cycle path in traversal order.
 type CircularInjectionError struct {
-	root   string
-	tokens []Token
+	root string
+
+	// Tokens contains the full cycle path in traversal order.
+	Tokens []Token
 }
 
 func circularModuleInjection(sequence ...Token) *CircularInjectionError {
 	return &CircularInjectionError{
 		root:   circularModuleErrorRoot,
-		tokens: sequence,
+		Tokens: sequence,
 	}
 }
 
 func circularDependencyInjection(sequence ...Token) *CircularInjectionError {
 	return &CircularInjectionError{
 		root:   circularDependencyErrorRoot,
-		tokens: sequence,
+		Tokens: sequence,
 	}
 }
 
@@ -38,7 +40,7 @@ func circularDependencyInjection(sequence ...Token) *CircularInjectionError {
 //
 //	circular dependency injection error: A -> B -> A
 func (err *CircularInjectionError) Error() string {
-	return fmt.Sprintf("circular %s injection error: %s ", err.root, strings.Join(err.tokens, " -> "))
+	return fmt.Sprintf("circular %s injection error: %s ", err.root, strings.Join(err.Tokens, " -> "))
 }
 
 // DependencyError is returned when the container cannot satisfy a declared
@@ -69,9 +71,21 @@ func invalidInjectionType[T any](token Token, value any) *DependencyError {
 	}
 }
 
+func nilInjection() *DependencyError {
+	return &DependencyError{
+		reason: "injection is nil",
+	}
+}
+
 func missingInjection(token Token, injections []*Injectable) *DependencyError {
 	return &DependencyError{
 		reason: fmt.Sprintf("injection %s is missing in the scope: %v", token, injections),
+	}
+}
+
+func missingFactoryConstructor(token Token) *DependencyError {
+	return &DependencyError{
+		reason: fmt.Sprintf("factory constructor is missing for %s", token),
 	}
 }
 

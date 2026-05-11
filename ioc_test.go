@@ -1,6 +1,7 @@
 package gioc
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -20,7 +21,7 @@ type OrderService struct {
 	Cache *Cache
 }
 
-func mustRun(t *testing.T, c *IOContainer) {
+func mustRun(t *testing.T, c *Container) {
 	t.Helper()
 	if err := c.Run(); err != nil {
 		t.Fatalf("container.Run: %v", err)
@@ -176,6 +177,39 @@ func TestFactoryProvider_CustomToken(t *testing.T) {
 	}
 }
 
+func TestFactoryProvider_CreateAutoTokenWithoutPriorTokenCall(t *testing.T) {
+	p := FactoryProvider[*Logger]("", Factory[*Logger]{
+		Constructor: func(deps ...*Injectable) (*Logger, error) {
+			return &Logger{}, nil
+		},
+	}, false)
+
+	inj, err := p.Create()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if inj.Token != "Logger" {
+		t.Fatalf("expected token Logger, got %q", inj.Token)
+	}
+}
+
+func TestFactoryProvider_PrototypeCreateAutoTokenWithoutPriorTokenCall(t *testing.T) {
+	p := FactoryProvider[*Logger]("", Factory[*Logger]{
+		ValueScope: Prototype,
+		Constructor: func(deps ...*Injectable) (*Logger, error) {
+			return &Logger{}, nil
+		},
+	}, false)
+
+	inj, err := p.Create()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if inj.Token != "Logger" {
+		t.Fatalf("expected token Logger, got %q", inj.Token)
+	}
+}
+
 func TestFactoryProvider_InjectionsReturnsInjects(t *testing.T) {
 	p := FactoryProvider[*UserService]("", Factory[*UserService]{
 		Injects: Inject("Logger", "Database"),
@@ -250,6 +284,14 @@ func TestFactoryProvider_ScopeField(t *testing.T) {
 	}
 }
 
+func TestFactoryProvider_NilConstructorReturnsError(t *testing.T) {
+	p := FactoryProvider[*Logger]("", Factory[*Logger]{}, false)
+
+	if _, err := p.Create(); err == nil {
+		t.Fatal("expected error for nil constructor")
+	}
+}
+
 func TestDerive_HappyPath(t *testing.T) {
 	injections := []*Injectable{
 		{Token: "Database", Instance: &Database{DSN: "pg"}},
@@ -300,6 +342,13 @@ func TestDerive_EmptySlice(t *testing.T) {
 	_, err := ResolveFrom[*Database]("X", []*Injectable{})
 	if err == nil {
 		t.Fatal("expected error for empty injections")
+	}
+}
+
+func TestDerive_NilInjectionReturnsError(t *testing.T) {
+	_, err := ResolveFrom[*Database]("Database", []*Injectable{nil})
+	if err == nil {
+		t.Fatal("expected error for nil injection")
 	}
 }
 
@@ -453,6 +502,16 @@ func TestContainer_NoModules(t *testing.T) {
 	mustRun(t, c)
 }
 
+func TestContainer_RunCanBeCalledTwice(t *testing.T) {
+	c := NewContainer()
+	mod := NewModule("app")
+	mod.Provide(ValueProvider[*Logger]("", &Logger{Prefix: "app"}, false))
+	c.AddModules(mod)
+
+	mustRun(t, c)
+	mustRun(t, c)
+}
+
 func TestContainer_MultipleModulesNoImport(t *testing.T) {
 	c := NewContainer()
 	a := NewModule("a")
@@ -461,6 +520,30 @@ func TestContainer_MultipleModulesNoImport(t *testing.T) {
 	b.Provide(ValueProvider[*Database]("", &Database{}, false))
 	c.AddModules(a, b)
 	mustRun(t, c)
+}
+
+func TestContainer_ImportedModuleInitializedOnce(t *testing.T) {
+	calls := 0
+
+	infra := NewModule("infra")
+	infra.Provide(FactoryProvider[*Logger]("", Factory[*Logger]{
+		ValueScope: Prototype,
+		Constructor: func(deps ...*Injectable) (*Logger, error) {
+			calls++
+			return &Logger{Prefix: "infra"}, nil
+		},
+	}, true))
+
+	app := NewModule("app")
+	app.Import(infra)
+
+	c := NewContainer()
+	c.AddModules(infra, app)
+	mustRun(t, c)
+
+	if calls != 1 {
+		t.Fatalf("imported module should be initialized once, got %d calls", calls)
+	}
 }
 
 func TestContainer_GlobalModuleLookup(t *testing.T) {
@@ -1051,6 +1134,42 @@ func TestCircularProviderDependency_ErrorContainsCyclePath(t *testing.T) {
 	errMsg := err.Error()
 	if !strings.Contains(errMsg, tokenA) || !strings.Contains(errMsg, tokenB) {
 		t.Fatalf("error should contain both %s and %s in the cycle path, got: %v", tokenA, tokenB, errMsg)
+	}
+}
+
+func TestCircularProviderDependency_ErrorExposesCycleTokens(t *testing.T) {
+	tokenA := "ServiceA"
+	tokenB := "ServiceB"
+
+	mod := NewModule("app")
+	mod.Provide(
+		FactoryProvider[*ServiceA](tokenA, Factory[*ServiceA]{
+			Injects: Inject(tokenB),
+			Constructor: func(deps ...*Injectable) (*ServiceA, error) {
+				return &ServiceA{}, nil
+			},
+		}, false),
+		FactoryProvider[*ServiceB](tokenB, Factory[*ServiceB]{
+			Injects: Inject(tokenA),
+			Constructor: func(deps ...*Injectable) (*ServiceB, error) {
+				return &ServiceB{}, nil
+			},
+		}, false),
+	)
+
+	c := NewContainer()
+	c.AddModules(mod)
+	err := c.Run()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var cycleErr *CircularInjectionError
+	if !errors.As(err, &cycleErr) {
+		t.Fatalf("expected CircularInjectionError, got %T", err)
+	}
+	if len(cycleErr.Tokens) == 0 {
+		t.Fatal("expected cycle tokens to be exposed")
 	}
 }
 
@@ -1788,6 +1907,21 @@ func TestResolve_WrongType(t *testing.T) {
 	}
 }
 
+func TestResolve_NilInjectionReturnsError(t *testing.T) {
+	_, err := Resolve[*Logger](nil)
+	if err == nil {
+		t.Fatal("expected error for nil injection")
+	}
+}
+
+func TestResolve_NilInstanceWrongTypeReturnsError(t *testing.T) {
+	inj := &Injectable{Token: "Logger", Instance: nil}
+	_, err := Resolve[*Logger](inj)
+	if err == nil {
+		t.Fatal("expected error for nil instance")
+	}
+}
+
 func TestResolve_Interface(t *testing.T) {
 	var w strings.Builder
 	w.WriteString("hello")
@@ -1835,6 +1969,20 @@ func TestRequire_EmptyInjections_Panics(t *testing.T) {
 	Require(nil, "Logger")
 }
 
+func TestRequire_NilInjection_PanicsWithDependencyError(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic for nil injection")
+		}
+		if _, ok := r.(*DependencyError); !ok {
+			t.Fatalf("expected DependencyError panic, got %T", r)
+		}
+	}()
+
+	Require([]*Injectable{nil}, "Logger")
+}
+
 func TestRequire_NoTokens_NoOp(t *testing.T) {
 	// zero required tokens — must not panic even with empty injections
 	Require(nil)
@@ -1865,6 +2013,24 @@ func TestCreateToken_InvalidType_Panics(t *testing.T) {
 		}
 	}()
 	CreateToken[*string]()
+}
+
+func TestCreateToken_NonStructValue_Panics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for non-struct value type")
+		}
+	}()
+	CreateToken[int]()
+}
+
+func TestCreateToken_InterfaceType_Panics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for interface type")
+		}
+	}()
+	CreateToken[error]()
 }
 
 // ---------------------------------------------------------------------------

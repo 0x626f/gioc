@@ -166,6 +166,12 @@ func (provider *FactoryProviderInjection[T]) Injections() []Token {
 // the cached Injectable. For Prototype scope the constructor is called every
 // time. Any error from the constructor is propagated directly.
 func (provider *FactoryProviderInjection[T]) Create(injections ...*Injectable) (*Injectable, error) {
+	token := provider.Token()
+
+	if provider.Factory.Constructor == nil {
+		return nil, missingFactoryConstructor(token)
+	}
+
 	if provider.Factory.ValueScope == Singleton {
 		if provider.instance == nil {
 			instance, err := provider.Factory.Constructor(injections...)
@@ -173,7 +179,7 @@ func (provider *FactoryProviderInjection[T]) Create(injections ...*Injectable) (
 				return nil, err
 			}
 			provider.instance = &Injectable{
-				Token:    provider.Key,
+				Token:    token,
 				Instance: instance,
 			}
 		}
@@ -186,7 +192,7 @@ func (provider *FactoryProviderInjection[T]) Create(injections ...*Injectable) (
 	}
 
 	return &Injectable{
-		Token:    provider.Key,
+		Token:    token,
 		Instance: instance,
 	}, nil
 }
