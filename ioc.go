@@ -154,6 +154,17 @@ func (container *Container) Resolve(token Token, modules ...*Module) (*Injectabl
 	return nil, missingInjection(token, nil)
 }
 
+// Get resolves token from the container and type-asserts the resulting
+// instance to T. It is a typed convenience wrapper around Container.Resolve and
+// Resolve. Call Run before using Get.
+func Get[T any](container *Container, token Token, modules ...*Module) (T, error) {
+	injection, err := container.Resolve(token, modules...)
+	if err != nil {
+		return zero[T](), err
+	}
+	return Resolve[T](injection)
+}
+
 // lookup resolves a token for the given module context. It first searches the
 // module's own providers and direct imports; if nothing is found it falls
 // through to each global module in registration order, skipping the current

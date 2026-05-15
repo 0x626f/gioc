@@ -89,7 +89,12 @@ func main() {
         panic(err)
     }
 
-    fmt.Println("container wired successfully")
+    app, err := gioc.Get[*App](c, "App", mod)
+    if err != nil {
+        panic(err)
+    }
+
+    fmt.Println("container wired successfully", app.DB.DSN)
 }
 ```
 
@@ -222,6 +227,17 @@ if err != nil {
     return err
 }
 db, err := gioc.Resolve[*Database](inj)
+```
+
+### Get — fetch and unwrap after Run
+
+`Get` combines `Container.Resolve` and `Resolve` when callers want a typed value directly. If no module context is provided, it searches the container's root modules in registration order.
+
+```go
+db, err := gioc.Get[*Database](c, "Database", appMod)
+if err != nil {
+    return err
+}
 ```
 
 ### Require — panic-guard at the top of a constructor

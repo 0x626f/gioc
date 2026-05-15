@@ -1052,6 +1052,76 @@ func TestContainer_ResolveNilModuleReturnsError(t *testing.T) {
 	}
 }
 
+func TestGet_HappyPath(t *testing.T) {
+	logToken := CreateToken[Logger]()
+
+	c := NewContainer()
+	mod := NewModule("app")
+	mod.Provide(ValueProvider[*Logger]("", &Logger{Prefix: "typed"}, false))
+	c.AddModules(mod)
+	mustRun(t, c)
+
+	log, err := Get[*Logger](c, logToken, mod)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if log.Prefix != "typed" {
+		t.Fatalf("expected typed, got %s", log.Prefix)
+	}
+}
+
+func TestGet_WithoutModulesSearchesRootModules(t *testing.T) {
+	logToken := CreateToken[Logger]()
+
+	c := NewContainer()
+	mod := NewModule("app")
+	mod.Provide(ValueProvider[*Logger]("", &Logger{Prefix: "root"}, false))
+	c.AddModules(mod)
+	mustRun(t, c)
+
+	log, err := Get[*Logger](c, logToken)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if log.Prefix != "root" {
+		t.Fatalf("expected root, got %s", log.Prefix)
+	}
+}
+
+func TestGet_ResolveError(t *testing.T) {
+	c := NewContainer()
+
+	_, err := Get[*Logger](c, "Logger")
+	if err == nil {
+		t.Fatal("expected error before container Run")
+	}
+
+	var depErr *DependencyError
+	if !errors.As(err, &depErr) {
+		t.Fatalf("expected DependencyError, got %T", err)
+	}
+}
+
+func TestGet_WrongType(t *testing.T) {
+	logToken := CreateToken[Logger]()
+
+	c := NewContainer()
+	mod := NewModule("app")
+	mod.Provide(ValueProvider[string](logToken, "not-a-logger", false))
+	c.AddModules(mod)
+	mustRun(t, c)
+
+	_, err := Get[*Logger](c, logToken, mod)
+	if err == nil {
+		t.Fatal("expected error for wrong type")
+	}
+
+	var depErr *DependencyError
+	if !errors.As(err, &depErr) {
+		t.Fatalf("expected DependencyError, got %T", err)
+	}
+}
+
 func TestContainer_FactoryProviderNoDeps(t *testing.T) {
 	c := NewContainer()
 	mod := NewModule("app")
