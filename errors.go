@@ -10,13 +10,11 @@ const (
 	circularDependencyErrorRoot = "dependency"
 )
 
-// CircularInjectionError is returned by Container.Run when the container
-// detects a cycle in either the module import graph or the provider dependency
-// graph. The Tokens field contains the full cycle path in traversal order.
+// CircularInjectionError reports a module or provider cycle.
 type CircularInjectionError struct {
 	root string
 
-	// Tokens contains the full cycle path in traversal order.
+	// Tokens is the cycle path.
 	Tokens []Token
 }
 
@@ -34,18 +32,12 @@ func circularDependencyInjection(sequence ...Token) *CircularInjectionError {
 	}
 }
 
-// Error implements the error interface.
-// The message includes the cycle kind ("module" or "dependency") and the full
-// token path that forms the cycle, e.g.:
-//
-//	circular dependency injection error: A -> B -> A
+// Error returns the formatted cycle error.
 func (err *CircularInjectionError) Error() string {
 	return fmt.Sprintf("circular %s injection error: %s ", err.root, strings.Join(err.Tokens, " -> "))
 }
 
-// DependencyError is returned when the container cannot satisfy a declared
-// dependency — either because the required token is not registered in the
-// visible scope, or because an Injection cannot be cast to the expected type.
+// DependencyError reports an invalid or missing dependency.
 type DependencyError struct {
 	reason string
 }
@@ -125,7 +117,7 @@ func missingFactoryConstructor(token Token) *DependencyError {
 	}
 }
 
-// Error implements the error interface.
+// Error returns the formatted dependency error.
 func (err *DependencyError) Error() string {
 	return fmt.Sprintf("dependency error: %s ", err.reason)
 }

@@ -1,9 +1,6 @@
 package gioc
 
-// Module is the unit of organisation in the container. It groups a set of
-// providers, declares which other modules it depends on (via Import), and
-// optionally marks itself as global so its providers are visible across the
-// entire container without an explicit import.
+// Module groups providers and imports.
 type Module struct {
 	token     Token
 	global    bool
@@ -13,8 +10,7 @@ type Module struct {
 	err       error
 }
 
-// NewModule creates a new, empty module identified by the given token.
-// The token must be unique within the container.
+// NewModule returns an empty module with token.
 func NewModule(token Token) *Module {
 	return &Module{
 		token:     token,
@@ -23,33 +19,24 @@ func NewModule(token Token) *Module {
 	}
 }
 
-// Token returns the module's unique identifier.
+// Token returns the module token.
 func (module *Module) Token() Token {
 	return module.token
 }
 
-// Global marks this module as global. Every other module in the container can
-// inject providers from a global module without an explicit Import call.
-// Global modules are initialised before regular modules.
-// Returns the module itself for chaining.
+// Global makes this module visible to all modules.
 func (module *Module) Global() *Module {
 	module.global = true
 	return module
 }
 
-// Import declares that this module depends on the given modules. Providers
-// registered in the imported modules become directly visible to this module's
-// own providers during dependency resolution.
-// Returns the module itself for chaining.
+// Import makes exported providers from modules visible here.
 func (module *Module) Import(modules ...*Module) *Module {
 	module.imports = append(module.imports, modules...)
 	return module
 }
 
-// Provide registers one or more providers with this module. If a provider is
-// marked as exportable it is also recorded in the module's export set.
-// If two providers share the same token the last one registered wins.
-// Returns the module itself for chaining.
+// Provide registers providers on this module.
 func (module *Module) Provide(providers ...IProvider) *Module {
 	for _, provider := range providers {
 		if provider == nil {

@@ -2,41 +2,31 @@ package gioc
 
 import "sync"
 
-// IProvider is the common interface implemented by all provider types.
-// A provider encapsulates the construction logic for a single dependency and
-// carries metadata (token, scope, exportability) used by the container during
-// wiring.
+// IProvider describes a value the container can create.
 type IProvider interface {
-	// Token returns the unique identifier for this provider within its module.
+	// Token returns the provider token.
 	Token() Token
 
-	// Injections returns the ordered list of dependency tokens this provider
-	// requires to construct its instance.
+	// Injections returns dependency tokens required by Create.
 	Injections() []Token
 
-	// Create instantiates the managed object using the supplied resolved
-	// dependencies and wraps it in an Injection.
+	// Create builds the provider value from resolved dependencies.
 	Create(Injections) (*Injection, error)
 
-	// Exportable reports whether this provider's token is visible to modules
-	// that import the owning module.
+	// Exportable reports whether importers can use this provider.
 	Exportable() bool
 
-	// Scope returns the lifecycle scope (Singleton or Prototype) of the
-	// instances produced by this provider.
+	// Scope returns the provider lifecycle.
 	Scope() Scope
 
-	// AssignOn binds this provider to the given module. Called automatically
-	// by Module.Provide.
+	// AssignOn binds the provider to a module.
 	AssignOn(module *Module)
 
-	// AssignedTo returns the module this provider was registered with.
+	// AssignedTo returns the owning module.
 	AssignedTo() *Module
 }
 
-// ValueProviderInjection wraps a pre-existing value as a provider.
-// It always has Singleton scope — every call to Create returns the same
-// underlying value.
+// ValueProviderInjection provides an existing singleton value.
 type ValueProviderInjection[T any] struct {
 	Key       Token
 	Export    bool
@@ -45,11 +35,7 @@ type ValueProviderInjection[T any] struct {
 	tokenOnce sync.Once
 }
 
-// ValueProvider creates a provider that serves the given value as-is, without
-// any constructor logic. The token is derived from T when left empty.
-// Set exportable to true to make the provider visible to importing modules.
-//
-//	mod.Provide(ValueProvider[*Config]("", &Config{DSN: "..."}, true))
+// ValueProvider returns a singleton provider for value.
 func ValueProvider[T any](token Token, value T, exportable bool) *ValueProviderInjection[T] {
 	return &ValueProviderInjection[T]{
 		Key:    token,
@@ -58,8 +44,7 @@ func ValueProvider[T any](token Token, value T, exportable bool) *ValueProviderI
 	}
 }
 
-// Token returns the provider's token, deriving it from the type parameter when
-// the Key field is empty.
+// Token returns the configured or derived provider token.
 func (provider *ValueProviderInjection[T]) Token() Token {
 	provider.tokenOnce.Do(func() {
 		if provider.Key == "" {
@@ -69,14 +54,12 @@ func (provider *ValueProviderInjection[T]) Token() Token {
 	return provider.Key
 }
 
-// Injections always returns an empty slice — a value provider has no
-// constructor dependencies.
+// Injections returns nil for value providers.
 func (provider *ValueProviderInjection[T]) Injections() []Token {
 	return []Token{}
 }
 
-// Create wraps the held value in an Injection. The same value pointer is
-// returned on every call (Singleton behaviour).
+// Create returns the stored value as an Injection.
 func (provider *ValueProviderInjection[T]) Create(Injections) (*Injection, error) {
 	return &Injection{
 		Token:    provider.Token(),
@@ -84,44 +67,39 @@ func (provider *ValueProviderInjection[T]) Create(Injections) (*Injection, error
 	}, nil
 }
 
-// Exportable reports whether this provider is visible to importing modules.
+// Exportable reports whether importers can use this provider.
 func (provider *ValueProviderInjection[T]) Exportable() bool {
 	return provider.Export
 }
 
-// Scope always returns Singleton for value providers.
+// Scope returns Singleton for value providers.
 func (provider *ValueProviderInjection[T]) Scope() Scope {
 	return Singleton
 }
 
-// AssignOn binds the provider to its owning module.
+// AssignOn binds the provider to module.
 func (provider *ValueProviderInjection[T]) AssignOn(module *Module) {
 	provider.module = module
 }
 
-// AssignedTo returns the module this provider belongs to.
+// AssignedTo returns the owning module.
 func (provider *ValueProviderInjection[T]) AssignedTo() *Module {
 	return provider.module
 }
 
-// Factory describes the construction contract for a FactoryProvider: the
-// tokens of its dependencies, the desired scope, and the constructor function
-// that receives the resolved dependencies and returns a new instance.
+// Factory defines how to build a provider value.
 type Factory[T any] struct {
-	// Injects lists the dependency tokens passed to Constructor, in order.
+	// Injects lists constructor dependency tokens.
 	Injects []Token
 
-	// ValueScope controls whether a single instance is reused (Singleton) or
-	// a new instance is created on every request (Prototype).
+	// ValueScope selects Singleton or Prototype behavior.
 	ValueScope Scope
 
-	// Constructor is called with the resolved dependencies each time a new
-	// instance is needed (always for Prototype; once for Singleton).
+	// Constructor builds the value from resolved dependencies.
 	Constructor func(Injections) (T, error)
 }
 
-// NewFactory creates a Factory with the given dependency tokens, scope, and
-// constructor.
+// NewFactory returns a Factory.
 func NewFactory[T any](injects []Token, constructor func(Injections) (T, error), valueScope Scope) Factory[T] {
 	return Factory[T]{
 		Injects:     injects,
@@ -130,9 +108,7 @@ func NewFactory[T any](injects []Token, constructor func(Injections) (T, error),
 	}
 }
 
-// FactoryProviderInjection is a provider backed by a constructor function.
-// For Singleton scope the instance is created once and cached; for Prototype
-// scope the constructor is invoked on every Create call.
+// FactoryProviderInjection provides values from a Factory.
 type FactoryProviderInjection[T any] struct {
 	Key       Token
 	Export    bool
@@ -142,19 +118,7 @@ type FactoryProviderInjection[T any] struct {
 	tokenOnce sync.Once
 }
 
-// FactoryProvider creates a provider that constructs its instance via the
-// supplied Factory. The token is derived from T when left empty.
-// Set exportable to true to make the provider visible to importing modules.
-//
-//	mod.Provide(FactoryProvider[*Service]("", Factory[*Service]{
-//	    Injects:     Inject("Logger", "Database"),
-//	    ValueScope:  Singleton,
-//	    Constructor: func(deps Injections) (*Service, error) {
-//	        log, _ := Resolve[*Logger]("Logger", deps)
-//	        db,  _ := Resolve[*Database]("Database", deps)
-//	        return &Service{Log: log, DB: db}, nil
-//	    },
-//	}, true))
+// FactoryProvider returns a provider backed by factory.
 func FactoryProvider[T any](token Token, factory Factory[T], exportable bool) *FactoryProviderInjection[T] {
 	return &FactoryProviderInjection[T]{
 		Key:     token,
@@ -163,8 +127,7 @@ func FactoryProvider[T any](token Token, factory Factory[T], exportable bool) *F
 	}
 }
 
-// Token returns the provider's token, deriving it from the type parameter when
-// the Key field is empty.
+// Token returns the configured or derived provider token.
 func (provider *FactoryProviderInjection[T]) Token() Token {
 	provider.tokenOnce.Do(func() {
 		if provider.Key == "" {
@@ -174,15 +137,12 @@ func (provider *FactoryProviderInjection[T]) Token() Token {
 	return provider.Key
 }
 
-// Injections returns the dependency tokens declared in Factory.Injects.
+// Injections returns the factory dependency tokens.
 func (provider *FactoryProviderInjection[T]) Injections() []Token {
 	return provider.Factory.Injects
 }
 
-// Create builds and returns the managed instance. For Singleton scope the
-// constructor is called only on the first invocation; subsequent calls return
-// the cached Injection. For Prototype scope the constructor is called every
-// time. Any error from the constructor is propagated directly.
+// Create builds or returns the provider value.
 func (provider *FactoryProviderInjection[T]) Create(injections Injections) (*Injection, error) {
 	token := provider.Token()
 
@@ -215,22 +175,22 @@ func (provider *FactoryProviderInjection[T]) Create(injections Injections) (*Inj
 	}, nil
 }
 
-// Exportable reports whether this provider is visible to importing modules.
+// Exportable reports whether importers can use this provider.
 func (provider *FactoryProviderInjection[T]) Exportable() bool {
 	return provider.Export
 }
 
-// Scope returns the lifecycle scope configured in the Factory.
+// Scope returns the configured lifecycle.
 func (provider *FactoryProviderInjection[T]) Scope() Scope {
 	return provider.Factory.ValueScope
 }
 
-// AssignOn binds the provider to its owning module.
+// AssignOn binds the provider to module.
 func (provider *FactoryProviderInjection[T]) AssignOn(module *Module) {
 	provider.module = module
 }
 
-// AssignedTo returns the module this provider belongs to.
+// AssignedTo returns the owning module.
 func (provider *FactoryProviderInjection[T]) AssignedTo() *Module {
 	return provider.module
 }

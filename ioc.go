@@ -7,9 +7,7 @@ type metadata struct {
 	instances map[IProvider]*Injection
 }
 
-// Container is the top-level dependency injection container.
-// It owns a set of modules, resolves their dependency graph, and instantiates
-// all providers in the correct topological order when Run is called.
+// Container owns modules and resolves provider dependencies.
 type Container struct {
 	modules []*Module
 	globals []*Module
@@ -20,7 +18,7 @@ type Container struct {
 	runErr error
 }
 
-// NewContainer creates a new, empty Container ready to accept modules.
+// NewContainer returns an empty Container.
 func NewContainer() *Container {
 	return &Container{
 		meta: &metadata{
@@ -30,9 +28,7 @@ func NewContainer() *Container {
 	}
 }
 
-// AddModules registers one or more modules with the container.
-// Modules must be added before calling Run. It returns an error if registration
-// is attempted after Run has started.
+// AddModules registers modules before Run.
 func (container *Container) AddModules(modules ...*Module) error {
 	container.mu.Lock()
 	defer container.mu.Unlock()
@@ -45,20 +41,7 @@ func (container *Container) AddModules(modules ...*Module) error {
 	return nil
 }
 
-// Run wires the entire container:
-//  1. Performs a depth-first traversal of the module import graph to detect
-//     circular module dependencies and collect global modules.
-//  2. Initialises global modules first, so their singletons are ready before
-//     regular modules are processed.
-//  3. Initialises all remaining modules, verifying provider dependency graphs
-//     for cycles and instantiating each provider in topological order.
-//     Providers from global modules are visible to every module during this
-//     phase without an explicit Import.
-//
-// Returns a [CircularInjectionError] if a cycle is found in the module or
-// provider graph, or a [DependencyError] if a required dependency is missing
-// or a constructor returns an error.
-// After a successful run the internal metadata is cleared.
+// Run validates modules and creates provider instances.
 func (container *Container) Run() (err error) {
 	container.mu.Lock()
 	defer container.mu.Unlock()
@@ -122,10 +105,7 @@ func (container *Container) cache(provider IProvider, injection *Injection) {
 	container.meta.instances[provider] = injection
 }
 
-// Resolve returns the provider instance visible from the given module contexts.
-// Call Run before using Resolve so the dependency graph has already been
-// validated. If no modules are provided, Resolve searches the container's root
-// modules in registration order. The first module that can see the token wins.
+// Resolve returns token from the given modules after Run.
 func (container *Container) Resolve(token Token, modules ...*Module) (*Injection, error) {
 	container.mu.Lock()
 	defer container.mu.Unlock()
@@ -154,9 +134,7 @@ func (container *Container) Resolve(token Token, modules ...*Module) (*Injection
 	return nil, missingInjection(token, nil)
 }
 
-// Get resolves token from the container and type-asserts the resulting
-// instance to T. It is a typed convenience wrapper around Container.Resolve.
-// Call Run before using Get.
+// Get resolves token from the container as T.
 func Get[T any](container *Container, token Token, modules ...*Module) (T, error) {
 	injection, err := container.Resolve(token, modules...)
 	if err != nil {

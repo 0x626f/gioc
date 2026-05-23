@@ -1,43 +1,25 @@
 package gioc
 
-// Injection is the runtime wrapper produced by a provider after construction.
-// It pairs the resolved instance with its Token so the container can match it
-// against injection requests by name.
+// Injection stores a resolved instance with its token.
 type Injection struct {
 	Token    Token
 	Instance any
 }
 
-// Injections is the resolved dependency set passed to a factory constructor.
-// It replaces the older variadic []*Injection constructor argument while
-// preserving slice semantics for iteration and helper use.
+// Injections is the dependency set passed to a factory constructor.
 type Injections []*Injection
 
-// Inject declares the ordered list of dependency tokens that a factory
-// constructor expects to receive as its Injections argument. The tokens
-// must correspond to providers registered within the same module or any of its
-// directly imported modules.
-//
-//	FactoryProvider[*Service]("", Factory[*Service]{
-//	    Injects: Inject("Logger", "Database"),
-//	    Constructor: func(deps Injections) (*Service, error) { ... },
-//	}, false)
+// Inject returns dependency tokens for a factory.
 func Inject(injections ...Token) []Token {
 	return injections
 }
 
-// Resolve finds the dependency with the given token in the injection set and
-// type-asserts its instance to T. It returns a [DependencyError] if the
-// dependency is missing or cannot be cast to T.
-//
-//	db, err := Resolve[*Database]("Database", deps)
+// Resolve returns token from injections as T.
 func Resolve[T any](token Token, injections Injections) (T, error) {
 	return resolveFrom[T](token, injections)
 }
 
-// MustResolve finds and type-asserts the dependency with the given token in the
-// injection set. It panics with a [DependencyError] if the dependency is missing
-// or cannot be cast to T.
+// MustResolve returns token from injections as T or panics.
 func MustResolve[T any](token Token, injections Injections) T {
 	instance, err := Resolve[T](token, injections)
 	if err != nil {
@@ -62,8 +44,7 @@ func resolveInstance[T any](token Token, instance any) (T, error) {
 	return val, nil
 }
 
-// Resolve finds the dependency with the given token in the injection set and
-// returns its ready-to-use instance.
+// Resolve returns token from injections as any.
 func (injections Injections) Resolve(token Token) (any, error) {
 	for _, injection := range injections {
 		if injection == nil {
@@ -77,9 +58,7 @@ func (injections Injections) Resolve(token Token) (any, error) {
 	return nil, missingInjection(token, injections)
 }
 
-// MustResolve finds the dependency with the given token in the injection set
-// and returns its ready-to-use instance. It panics with a [DependencyError] if
-// the dependency is missing.
+// MustResolve returns token from injections as any or panics.
 func (injections Injections) MustResolve(token Token) any {
 	instance, err := injections.Resolve(token)
 	if err != nil {
@@ -96,17 +75,12 @@ func resolveFrom[T any](token Token, injections Injections) (T, error) {
 	return resolveInstance[T](token, instance)
 }
 
-// Require panics with a [DependencyError] if any of the required tokens is
-// absent from the injection set. Use it at the top of a factory constructor
-// to assert that all expected dependencies were provided before accessing them.
-//
-//	Require(deps, "Logger", "Database")
+// Require panics if any token is missing from injections.
 func Require(injections Injections, tokens ...Token) {
 	injections.Require(tokens...)
 }
 
-// Require panics with a [DependencyError] if any of the required tokens is
-// absent from the injection set.
+// Require panics if any token is missing from injections.
 func (injections Injections) Require(tokens ...Token) {
 	summary := make(map[string]struct{}, len(injections))
 	for _, injection := range injections {

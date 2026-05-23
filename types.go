@@ -1,16 +1,14 @@
 package gioc
 
-// Token is the unique string identifier for a provider within a module.
-// It is used as the key for dependency lookup and injection matching.
+// Token identifies a provider or module.
 type Token = string
 
-// Tokenized is implemented by any type that carries a Token identifier.
-// Both Module and IProvider satisfy this interface, enabling the generic
-// DFS traversal to work across both the module graph and provider graph.
+// Tokenized exposes a Token.
 type Tokenized interface {
 	Token() Token
 }
 
+// NewToken returns token as a Token.
 func NewToken(token string) Token {
 	return Token(token)
 }
