@@ -15,8 +15,8 @@ type IProvider interface {
 	Injections() []Token
 
 	// Create instantiates the managed object using the supplied resolved
-	// dependencies and wraps it in an Injectable.
-	Create(...*Injectable) (*Injectable, error)
+	// dependencies and wraps it in an Injection.
+	Create(Injections) (*Injection, error)
 
 	// Exportable reports whether this provider's token is visible to modules
 	// that import the owning module.
@@ -75,10 +75,10 @@ func (provider *ValueProviderInjection[T]) Injections() []Token {
 	return []Token{}
 }
 
-// Create wraps the held value in an Injectable. The same value pointer is
+// Create wraps the held value in an Injection. The same value pointer is
 // returned on every call (Singleton behaviour).
-func (provider *ValueProviderInjection[T]) Create(...*Injectable) (*Injectable, error) {
-	return &Injectable{
+func (provider *ValueProviderInjection[T]) Create(Injections) (*Injection, error) {
+	return &Injection{
 		Token:    provider.Token(),
 		Instance: provider.Value,
 	}, nil
@@ -117,7 +117,17 @@ type Factory[T any] struct {
 
 	// Constructor is called with the resolved dependencies each time a new
 	// instance is needed (always for Prototype; once for Singleton).
-	Constructor func(...*Injectable) (T, error)
+	Constructor func(Injections) (T, error)
+}
+
+// NewFactory creates a Factory with the given dependency tokens, scope, and
+// constructor.
+func NewFactory[T any](injects []Token, constructor func(Injections) (T, error), valueScope Scope) Factory[T] {
+	return Factory[T]{
+		Injects:     injects,
+		ValueScope:  valueScope,
+		Constructor: constructor,
+	}
 }
 
 // FactoryProviderInjection is a provider backed by a constructor function.
@@ -127,7 +137,7 @@ type FactoryProviderInjection[T any] struct {
 	Key       Token
 	Export    bool
 	Factory   Factory[T]
-	instance  *Injectable
+	instance  *Injection
 	module    *Module
 	tokenOnce sync.Once
 }
@@ -139,9 +149,9 @@ type FactoryProviderInjection[T any] struct {
 //	mod.Provide(FactoryProvider[*Service]("", Factory[*Service]{
 //	    Injects:     Inject("Logger", "Database"),
 //	    ValueScope:  Singleton,
-//	    Constructor: func(deps ...*Injectable) (*Service, error) {
-//	        log, _ := ResolveFrom[*Logger]("Logger", deps)
-//	        db,  _ := ResolveFrom[*Database]("Database", deps)
+//	    Constructor: func(deps Injections) (*Service, error) {
+//	        log, _ := Resolve[*Logger]("Logger", deps)
+//	        db,  _ := Resolve[*Database]("Database", deps)
 //	        return &Service{Log: log, DB: db}, nil
 //	    },
 //	}, true))
@@ -171,9 +181,9 @@ func (provider *FactoryProviderInjection[T]) Injections() []Token {
 
 // Create builds and returns the managed instance. For Singleton scope the
 // constructor is called only on the first invocation; subsequent calls return
-// the cached Injectable. For Prototype scope the constructor is called every
+// the cached Injection. For Prototype scope the constructor is called every
 // time. Any error from the constructor is propagated directly.
-func (provider *FactoryProviderInjection[T]) Create(injections ...*Injectable) (*Injectable, error) {
+func (provider *FactoryProviderInjection[T]) Create(injections Injections) (*Injection, error) {
 	token := provider.Token()
 
 	if provider.Factory.Constructor == nil {
@@ -182,11 +192,11 @@ func (provider *FactoryProviderInjection[T]) Create(injections ...*Injectable) (
 
 	if provider.Factory.ValueScope == Singleton {
 		if provider.instance == nil {
-			instance, err := provider.Factory.Constructor(injections...)
+			instance, err := provider.Factory.Constructor(injections)
 			if err != nil {
 				return nil, err
 			}
-			provider.instance = &Injectable{
+			provider.instance = &Injection{
 				Token:    token,
 				Instance: instance,
 			}
@@ -194,12 +204,12 @@ func (provider *FactoryProviderInjection[T]) Create(injections ...*Injectable) (
 		return provider.instance, nil
 	}
 
-	instance, err := provider.Factory.Constructor(injections...)
+	instance, err := provider.Factory.Constructor(injections)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Injectable{
+	return &Injection{
 		Token:    token,
 		Instance: instance,
 	}, nil

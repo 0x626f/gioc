@@ -45,7 +45,7 @@ func (err *CircularInjectionError) Error() string {
 
 // DependencyError is returned when the container cannot satisfy a declared
 // dependency — either because the required token is not registered in the
-// visible scope, or because an Injectable cannot be cast to the expected type.
+// visible scope, or because an Injection cannot be cast to the expected type.
 type DependencyError struct {
 	reason string
 }
@@ -113,7 +113,7 @@ func duplicateModuleToken(token Token) *DependencyError {
 	}
 }
 
-func missingInjection(token Token, injections []*Injectable) *DependencyError {
+func missingInjection(token Token, injections []*Injection) *DependencyError {
 	return &DependencyError{
 		reason: fmt.Sprintf("injection %s is missing in the scope: %v", token, injections),
 	}

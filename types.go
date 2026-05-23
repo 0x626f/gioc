@@ -10,3 +10,7 @@ type Token = string
 type Tokenized interface {
 	Token() Token
 }
+
+func NewToken(token string) Token {
+	return Token(token)
+}

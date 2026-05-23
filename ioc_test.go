@@ -27,12 +27,12 @@ func (provider *nonCachingSingletonProvider) Injections() []Token {
 	return nil
 }
 
-func (provider *nonCachingSingletonProvider) Create(...*Injectable) (*Injectable, error) {
+func (provider *nonCachingSingletonProvider) Create(Injections) (*Injection, error) {
 	provider.mu.Lock()
 	defer provider.mu.Unlock()
 
 	provider.calls++
-	return &Injectable{Token: provider.token, Instance: &Logger{Prefix: "custom"}}, nil
+	return &Injection{Token: provider.token, Instance: &Logger{Prefix: "custom"}}, nil
 }
 
 func (provider *nonCachingSingletonProvider) Exportable() bool {
@@ -79,7 +79,7 @@ func TestObjectProvider_CreateReturnsInjectable(t *testing.T) {
 	db := &Database{DSN: "postgres://localhost"}
 	p := ValueProvider[*Database]("", db, false)
 
-	inj, err := p.Create()
+	inj, err := p.Create(nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -123,8 +123,8 @@ func TestObjectProvider_CreateIdempotent(t *testing.T) {
 	db := &Database{DSN: "pg"}
 	p := ValueProvider[*Database]("", db, false)
 
-	a, _ := p.Create()
-	b, _ := p.Create()
+	a, _ := p.Create(nil)
+	b, _ := p.Create(nil)
 	if a.Instance != b.Instance {
 		t.Fatal("ValueProvider should return the same object every time")
 	}
@@ -154,17 +154,17 @@ func TestFactoryProvider_Prototype(t *testing.T) {
 	calls := 0
 	p := FactoryProvider[*Logger]("", Factory[*Logger]{
 		ValueScope: Prototype,
-		Constructor: func(deps ...*Injectable) (*Logger, error) {
+		Constructor: func(deps Injections) (*Logger, error) {
 			calls++
 			return &Logger{Prefix: "v"}, nil
 		},
 	}, false)
 
-	a, err := p.Create()
+	a, err := p.Create(nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	b, err := p.Create()
+	b, err := p.Create(nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -180,17 +180,17 @@ func TestFactoryProvider_Singleton(t *testing.T) {
 	calls := 0
 	p := FactoryProvider[*Logger]("", Factory[*Logger]{
 		ValueScope: Singleton,
-		Constructor: func(deps ...*Injectable) (*Logger, error) {
+		Constructor: func(deps Injections) (*Logger, error) {
 			calls++
 			return &Logger{Prefix: "v"}, nil
 		},
 	}, false)
 
-	a, err := p.Create()
+	a, err := p.Create(nil)
 	if err != nil {
 		t.Fatalf("first Create: %v", err)
 	}
-	b, err := p.Create()
+	b, err := p.Create(nil)
 	if err != nil {
 		t.Fatalf("second Create: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestFactoryProvider_Singleton(t *testing.T) {
 
 func TestFactoryProvider_AutoToken(t *testing.T) {
 	p := FactoryProvider[*Logger]("", Factory[*Logger]{
-		Constructor: func(deps ...*Injectable) (*Logger, error) {
+		Constructor: func(deps Injections) (*Logger, error) {
 			return &Logger{}, nil
 		},
 	}, false)
@@ -215,7 +215,7 @@ func TestFactoryProvider_AutoToken(t *testing.T) {
 
 func TestFactoryProvider_CustomToken(t *testing.T) {
 	p := FactoryProvider[*Logger]("custom-logger", Factory[*Logger]{
-		Constructor: func(deps ...*Injectable) (*Logger, error) {
+		Constructor: func(deps Injections) (*Logger, error) {
 			return &Logger{}, nil
 		},
 	}, false)
@@ -226,12 +226,12 @@ func TestFactoryProvider_CustomToken(t *testing.T) {
 
 func TestFactoryProvider_CreateAutoTokenWithoutPriorTokenCall(t *testing.T) {
 	p := FactoryProvider[*Logger]("", Factory[*Logger]{
-		Constructor: func(deps ...*Injectable) (*Logger, error) {
+		Constructor: func(deps Injections) (*Logger, error) {
 			return &Logger{}, nil
 		},
 	}, false)
 
-	inj, err := p.Create()
+	inj, err := p.Create(nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -243,12 +243,12 @@ func TestFactoryProvider_CreateAutoTokenWithoutPriorTokenCall(t *testing.T) {
 func TestFactoryProvider_PrototypeCreateAutoTokenWithoutPriorTokenCall(t *testing.T) {
 	p := FactoryProvider[*Logger]("", Factory[*Logger]{
 		ValueScope: Prototype,
-		Constructor: func(deps ...*Injectable) (*Logger, error) {
+		Constructor: func(deps Injections) (*Logger, error) {
 			return &Logger{}, nil
 		},
 	}, false)
 
-	inj, err := p.Create()
+	inj, err := p.Create(nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -260,7 +260,7 @@ func TestFactoryProvider_PrototypeCreateAutoTokenWithoutPriorTokenCall(t *testin
 func TestFactoryProvider_InjectionsReturnsInjects(t *testing.T) {
 	p := FactoryProvider[*UserService]("", Factory[*UserService]{
 		Injects: Inject("Logger", "Database"),
-		Constructor: func(deps ...*Injectable) (*UserService, error) {
+		Constructor: func(deps Injections) (*UserService, error) {
 			return &UserService{}, nil
 		},
 	}, false)
@@ -277,12 +277,12 @@ func TestFactoryProvider_ReceivesInjections(t *testing.T) {
 
 	p := FactoryProvider[*UserService]("", Factory[*UserService]{
 		Injects: Inject(logToken, dbToken),
-		Constructor: func(deps ...*Injectable) (*UserService, error) {
-			log, err := ResolveFrom[*Logger](logToken, deps)
+		Constructor: func(deps Injections) (*UserService, error) {
+			log, err := Resolve[*Logger](logToken, deps)
 			if err != nil {
 				return nil, err
 			}
-			db, err := ResolveFrom[*Database](dbToken, deps)
+			db, err := Resolve[*Database](dbToken, deps)
 			if err != nil {
 				return nil, err
 			}
@@ -290,12 +290,12 @@ func TestFactoryProvider_ReceivesInjections(t *testing.T) {
 		},
 	}, false)
 
-	injections := []*Injectable{
+	injections := []*Injection{
 		{Token: logToken, Instance: &Logger{Prefix: "test"}},
 		{Token: dbToken, Instance: &Database{DSN: "pg"}},
 	}
 
-	inj, err := p.Create(injections...)
+	inj, err := p.Create(injections)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -311,9 +311,31 @@ func TestFactoryProvider_ReceivesInjections(t *testing.T) {
 	}
 }
 
+func TestNewFactory(t *testing.T) {
+	constructor := func(deps Injections) (*Logger, error) {
+		return &Logger{Prefix: "new"}, nil
+	}
+
+	factory := NewFactory[*Logger](Inject("Logger"), constructor, Prototype)
+
+	if len(factory.Injects) != 1 || factory.Injects[0] != "Logger" {
+		t.Fatalf("unexpected injects: %v", factory.Injects)
+	}
+	if factory.ValueScope != Prototype {
+		t.Fatalf("expected Prototype scope, got %v", factory.ValueScope)
+	}
+	log, err := factory.Constructor(nil)
+	if err != nil {
+		t.Fatalf("unexpected constructor error: %v", err)
+	}
+	if log.Prefix != "new" {
+		t.Fatalf("expected prefix new, got %s", log.Prefix)
+	}
+}
+
 func TestFactoryProvider_ExportFlag(t *testing.T) {
 	p := FactoryProvider[*Logger]("", Factory[*Logger]{
-		Constructor: func(deps ...*Injectable) (*Logger, error) { return &Logger{}, nil },
+		Constructor: func(deps Injections) (*Logger, error) { return &Logger{}, nil },
 	}, true)
 	if !p.Exportable() {
 		t.Fatal("expected exportable")
@@ -334,18 +356,18 @@ func TestFactoryProvider_ScopeField(t *testing.T) {
 func TestFactoryProvider_NilConstructorReturnsError(t *testing.T) {
 	p := FactoryProvider[*Logger]("", Factory[*Logger]{}, false)
 
-	if _, err := p.Create(); err == nil {
+	if _, err := p.Create(nil); err == nil {
 		t.Fatal("expected error for nil constructor")
 	}
 }
 
 func TestDerive_HappyPath(t *testing.T) {
-	injections := []*Injectable{
+	injections := []*Injection{
 		{Token: "Database", Instance: &Database{DSN: "pg"}},
 		{Token: "Logger", Instance: &Logger{Prefix: "x"}},
 	}
 
-	db, err := ResolveFrom[*Database]("Database", injections)
+	db, err := Resolve[*Database]("Database", injections)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -355,11 +377,11 @@ func TestDerive_HappyPath(t *testing.T) {
 }
 
 func TestDerive_SecondElement(t *testing.T) {
-	injections := []*Injectable{
+	injections := []*Injection{
 		{Token: "A", Instance: &Logger{Prefix: "a"}},
 		{Token: "B", Instance: &Logger{Prefix: "b"}},
 	}
-	log, err := ResolveFrom[*Logger]("B", injections)
+	log, err := Resolve[*Logger]("B", injections)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -369,31 +391,31 @@ func TestDerive_SecondElement(t *testing.T) {
 }
 
 func TestDerive_NotFound(t *testing.T) {
-	_, err := ResolveFrom[*Database]("Missing", nil)
+	_, err := Resolve[*Database]("Missing", nil)
 	if err == nil {
 		t.Fatal("expected error for missing injection")
 	}
 }
 
 func TestDerive_WrongType(t *testing.T) {
-	injections := []*Injectable{
+	injections := []*Injection{
 		{Token: "Database", Instance: "not a database"},
 	}
-	_, err := ResolveFrom[*Database]("Database", injections)
+	_, err := Resolve[*Database]("Database", injections)
 	if err == nil {
 		t.Fatal("expected error for wrong type")
 	}
 }
 
 func TestDerive_EmptySlice(t *testing.T) {
-	_, err := ResolveFrom[*Database]("X", []*Injectable{})
+	_, err := Resolve[*Database]("X", []*Injection{})
 	if err == nil {
 		t.Fatal("expected error for empty injections")
 	}
 }
 
 func TestDerive_NilInjectionReturnsError(t *testing.T) {
-	_, err := ResolveFrom[*Database]("Database", []*Injectable{nil})
+	_, err := Resolve[*Database]("Database", []*Injection{nil})
 	if err == nil {
 		t.Fatal("expected error for nil injection")
 	}
@@ -479,7 +501,7 @@ func TestModule_OwnProviderShadowsImport(t *testing.T) {
 		t.Fatal("should find provider")
 	}
 
-	inj, _ := found.Create()
+	inj, _ := found.Create(nil)
 	log := inj.Instance.(*Logger)
 	if log.Prefix != "app-local" {
 		t.Fatalf("own provider should shadow import, got prefix %s", log.Prefix)
@@ -520,7 +542,7 @@ func TestModule_DuplicateTokenOverwrites(t *testing.T) {
 	mod.Provide(ValueProvider[*Logger]("", &Logger{Prefix: "second"}, false))
 
 	found := mod.lookup(CreateToken[Logger]())
-	inj, _ := found.Create()
+	inj, _ := found.Create(nil)
 	log := inj.Instance.(*Logger)
 	if log.Prefix != "second" {
 		t.Fatalf("last provider should win, got prefix %s", log.Prefix)
@@ -630,7 +652,7 @@ func TestContainer_RunFailureIsReturnedOnSubsequentRun(t *testing.T) {
 	mod := NewModule("app")
 	mod.Provide(FactoryProvider[*UserService]("", Factory[*UserService]{
 		Injects: Inject("missing"),
-		Constructor: func(deps ...*Injectable) (*UserService, error) {
+		Constructor: func(deps Injections) (*UserService, error) {
 			return &UserService{}, nil
 		},
 	}, false))
@@ -701,7 +723,7 @@ func TestContainer_ImportedModuleInitializedOnce(t *testing.T) {
 	infra := NewModule("infra")
 	infra.Provide(FactoryProvider[*Logger]("", Factory[*Logger]{
 		ValueScope: Prototype,
-		Constructor: func(deps ...*Injectable) (*Logger, error) {
+		Constructor: func(deps Injections) (*Logger, error) {
 			calls++
 			return &Logger{Prefix: "infra"}, nil
 		},
@@ -771,7 +793,7 @@ func TestContainer_LookupPrefersOwnOverGlobal(t *testing.T) {
 	if found == nil {
 		t.Fatal("should find provider")
 	}
-	inj, _ := found.Create()
+	inj, _ := found.Create(nil)
 	log := inj.Instance.(*Logger)
 	if log.Prefix != "local" {
 		t.Fatalf("own module should take priority over global, got %s", log.Prefix)
@@ -812,7 +834,7 @@ func TestContainer_ResolveAfterRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	log, err := Resolve[*Logger](inj)
+	log, err := resolveInjection[*Logger](inj)
 	if err != nil {
 		t.Fatalf("unexpected resolve error: %v", err)
 	}
@@ -834,7 +856,7 @@ func TestContainer_ResolveWithoutModulesSearchesRootModules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	log, err := Resolve[*Logger](inj)
+	log, err := resolveInjection[*Logger](inj)
 	if err != nil {
 		t.Fatalf("unexpected resolve error: %v", err)
 	}
@@ -860,7 +882,7 @@ func TestContainer_ResolveUsesFirstMatchingModule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	log, err := Resolve[*Logger](inj)
+	log, err := resolveInjection[*Logger](inj)
 	if err != nil {
 		t.Fatalf("unexpected resolve error: %v", err)
 	}
@@ -876,7 +898,7 @@ func TestContainer_ResolveReturnsCreatedInstanceAfterRun(t *testing.T) {
 	c := NewContainer()
 	mod := NewModule("app")
 	mod.Provide(FactoryProvider[*Logger]("", Factory[*Logger]{
-		Constructor: func(deps ...*Injectable) (*Logger, error) {
+		Constructor: func(deps Injections) (*Logger, error) {
 			calls++
 			return &Logger{Prefix: "created"}, nil
 		},
@@ -963,7 +985,7 @@ func TestContainer_ResolveSingletonIsConcurrentSafe(t *testing.T) {
 	mod := NewModule("app")
 	mod.Provide(FactoryProvider[*Logger]("", Factory[*Logger]{
 		ValueScope: Singleton,
-		Constructor: func(deps ...*Injectable) (*Logger, error) {
+		Constructor: func(deps Injections) (*Logger, error) {
 			callsMu.Lock()
 			defer callsMu.Unlock()
 
@@ -976,7 +998,7 @@ func TestContainer_ResolveSingletonIsConcurrentSafe(t *testing.T) {
 
 	const workers = 32
 	var wg sync.WaitGroup
-	results := make([]*Injectable, workers)
+	results := make([]*Injection, workers)
 	errs := make([]error, workers)
 
 	wg.Add(workers)
@@ -1015,7 +1037,7 @@ func TestContainer_ResolvePrototypeCreatesNewInstance(t *testing.T) {
 	mod := NewModule("app")
 	mod.Provide(FactoryProvider[*Logger]("", Factory[*Logger]{
 		ValueScope: Prototype,
-		Constructor: func(deps ...*Injectable) (*Logger, error) {
+		Constructor: func(deps Injections) (*Logger, error) {
 			calls++
 			return &Logger{Prefix: "created"}, nil
 		},
@@ -1126,7 +1148,7 @@ func TestContainer_FactoryProviderNoDeps(t *testing.T) {
 	c := NewContainer()
 	mod := NewModule("app")
 	mod.Provide(FactoryProvider[*Logger]("", Factory[*Logger]{
-		Constructor: func(deps ...*Injectable) (*Logger, error) {
+		Constructor: func(deps Injections) (*Logger, error) {
 			return &Logger{Prefix: "factory"}, nil
 		},
 	}, false))
@@ -1143,8 +1165,8 @@ func TestContainer_FactoryWithSingleDep(t *testing.T) {
 		ValueProvider[*Logger]("", &Logger{Prefix: "injected"}, false),
 		FactoryProvider[*UserService]("", Factory[*UserService]{
 			Injects: Inject(logToken),
-			Constructor: func(deps ...*Injectable) (*UserService, error) {
-				log, err := ResolveFrom[*Logger](logToken, deps)
+			Constructor: func(deps Injections) (*UserService, error) {
+				log, err := Resolve[*Logger](logToken, deps)
 				if err != nil {
 					return nil, err
 				}
@@ -1167,9 +1189,9 @@ func TestContainer_FactoryWithMultipleDeps(t *testing.T) {
 		ValueProvider[*Database]("", &Database{DSN: "pg"}, false),
 		FactoryProvider[*UserService]("", Factory[*UserService]{
 			Injects: Inject(logToken, dbToken),
-			Constructor: func(deps ...*Injectable) (*UserService, error) {
-				log, _ := ResolveFrom[*Logger](logToken, deps)
-				db, _ := ResolveFrom[*Database](dbToken, deps)
+			Constructor: func(deps Injections) (*UserService, error) {
+				log, _ := Resolve[*Logger](logToken, deps)
+				db, _ := Resolve[*Database](dbToken, deps)
 				return &UserService{Log: log, DB: db}, nil
 			},
 		}, false),
@@ -1190,16 +1212,16 @@ func TestContainer_FactoryDependsOnFactory(t *testing.T) {
 		ValueProvider[*Database]("", &Database{DSN: "pg"}, false),
 		FactoryProvider[*UserService]("", Factory[*UserService]{
 			Injects: Inject(logToken, dbToken),
-			Constructor: func(deps ...*Injectable) (*UserService, error) {
-				log, _ := ResolveFrom[*Logger](logToken, deps)
-				db, _ := ResolveFrom[*Database](dbToken, deps)
+			Constructor: func(deps Injections) (*UserService, error) {
+				log, _ := Resolve[*Logger](logToken, deps)
+				db, _ := Resolve[*Database](dbToken, deps)
 				return &UserService{Log: log, DB: db}, nil
 			},
 		}, false),
 		FactoryProvider[*OrderService]("", Factory[*OrderService]{
 			Injects: Inject(userSvcToken),
-			Constructor: func(deps ...*Injectable) (*OrderService, error) {
-				users, _ := ResolveFrom[*UserService](userSvcToken, deps)
+			Constructor: func(deps Injections) (*OrderService, error) {
+				users, _ := Resolve[*UserService](userSvcToken, deps)
 				return &OrderService{Users: users}, nil
 			},
 		}, false),
@@ -1218,8 +1240,8 @@ func TestContainer_CrossModuleInjection(t *testing.T) {
 	app.Import(infra)
 	app.Provide(FactoryProvider[*UserService]("", Factory[*UserService]{
 		Injects: Inject(logToken),
-		Constructor: func(deps ...*Injectable) (*UserService, error) {
-			log, _ := ResolveFrom[*Logger](logToken, deps)
+		Constructor: func(deps Injections) (*UserService, error) {
+			log, _ := Resolve[*Logger](logToken, deps)
 			return &UserService{Log: log}, nil
 		},
 	}, false))
@@ -1290,15 +1312,15 @@ func TestCircularProviderDependency_TwoWay(t *testing.T) {
 	mod.Provide(
 		FactoryProvider[*ServiceA](tokenA, Factory[*ServiceA]{
 			Injects: Inject(tokenB),
-			Constructor: func(deps ...*Injectable) (*ServiceA, error) {
-				b, _ := ResolveFrom[*ServiceB](tokenB, deps)
+			Constructor: func(deps Injections) (*ServiceA, error) {
+				b, _ := Resolve[*ServiceB](tokenB, deps)
 				return &ServiceA{B: b}, nil
 			},
 		}, false),
 		FactoryProvider[*ServiceB](tokenB, Factory[*ServiceB]{
 			Injects: Inject(tokenA),
-			Constructor: func(deps ...*Injectable) (*ServiceB, error) {
-				a, _ := ResolveFrom[*ServiceA](tokenA, deps)
+			Constructor: func(deps Injections) (*ServiceB, error) {
+				a, _ := Resolve[*ServiceA](tokenA, deps)
 				return &ServiceB{A: a}, nil
 			},
 		}, false),
@@ -1323,13 +1345,13 @@ func TestContainer_ResolveBeforeRunReturnsNotReady(t *testing.T) {
 	mod.Provide(
 		FactoryProvider[*ServiceA](tokenA, Factory[*ServiceA]{
 			Injects: Inject(tokenB),
-			Constructor: func(deps ...*Injectable) (*ServiceA, error) {
+			Constructor: func(deps Injections) (*ServiceA, error) {
 				return &ServiceA{}, nil
 			},
 		}, false),
 		FactoryProvider[*ServiceB](tokenB, Factory[*ServiceB]{
 			Injects: Inject(tokenA),
-			Constructor: func(deps ...*Injectable) (*ServiceB, error) {
+			Constructor: func(deps Injections) (*ServiceB, error) {
 				return &ServiceB{}, nil
 			},
 		}, false),
@@ -1356,19 +1378,19 @@ func TestCircularProviderDependency_ThreeWay(t *testing.T) {
 	mod.Provide(
 		FactoryProvider[*ServiceA](tokenA, Factory[*ServiceA]{
 			Injects: Inject(tokenB),
-			Constructor: func(deps ...*Injectable) (*ServiceA, error) {
+			Constructor: func(deps Injections) (*ServiceA, error) {
 				return &ServiceA{}, nil
 			},
 		}, false),
 		FactoryProvider[*ServiceB](tokenB, Factory[*ServiceB]{
 			Injects: Inject(tokenC),
-			Constructor: func(deps ...*Injectable) (*ServiceB, error) {
+			Constructor: func(deps Injections) (*ServiceB, error) {
 				return &ServiceB{}, nil
 			},
 		}, false),
 		FactoryProvider[*ServiceC](tokenC, Factory[*ServiceC]{
 			Injects: Inject(tokenA),
-			Constructor: func(deps ...*Injectable) (*ServiceC, error) {
+			Constructor: func(deps Injections) (*ServiceC, error) {
 				return &ServiceC{}, nil
 			},
 		}, false),
@@ -1392,7 +1414,7 @@ func TestCircularProviderDependency_SelfInjection(t *testing.T) {
 	mod.Provide(
 		FactoryProvider[*ServiceA](tokenA, Factory[*ServiceA]{
 			Injects: Inject(tokenA),
-			Constructor: func(deps ...*Injectable) (*ServiceA, error) {
+			Constructor: func(deps Injections) (*ServiceA, error) {
 				return &ServiceA{}, nil
 			},
 		}, false),
@@ -1419,25 +1441,25 @@ func TestCircularProviderDependency_FourWayChain(t *testing.T) {
 	mod.Provide(
 		FactoryProvider[*ServiceA](tokenA, Factory[*ServiceA]{
 			Injects: Inject(tokenB),
-			Constructor: func(deps ...*Injectable) (*ServiceA, error) {
+			Constructor: func(deps Injections) (*ServiceA, error) {
 				return &ServiceA{}, nil
 			},
 		}, false),
 		FactoryProvider[*ServiceB](tokenB, Factory[*ServiceB]{
 			Injects: Inject(tokenC),
-			Constructor: func(deps ...*Injectable) (*ServiceB, error) {
+			Constructor: func(deps Injections) (*ServiceB, error) {
 				return &ServiceB{}, nil
 			},
 		}, false),
 		FactoryProvider[*ServiceC](tokenC, Factory[*ServiceC]{
 			Injects: Inject(tokenD),
-			Constructor: func(deps ...*Injectable) (*ServiceC, error) {
+			Constructor: func(deps Injections) (*ServiceC, error) {
 				return &ServiceC{}, nil
 			},
 		}, false),
 		FactoryProvider[*ServiceD](tokenD, Factory[*ServiceD]{
 			Injects: Inject(tokenA),
-			Constructor: func(deps ...*Injectable) (*ServiceD, error) {
+			Constructor: func(deps Injections) (*ServiceD, error) {
 				return &ServiceD{}, nil
 			},
 		}, false),
@@ -1463,19 +1485,19 @@ func TestCircularProviderDependency_PartialCycleInChain(t *testing.T) {
 	mod.Provide(
 		FactoryProvider[*ServiceA](tokenA, Factory[*ServiceA]{
 			Injects: Inject(tokenB),
-			Constructor: func(deps ...*Injectable) (*ServiceA, error) {
+			Constructor: func(deps Injections) (*ServiceA, error) {
 				return &ServiceA{}, nil
 			},
 		}, false),
 		FactoryProvider[*ServiceB](tokenB, Factory[*ServiceB]{
 			Injects: Inject(tokenC),
-			Constructor: func(deps ...*Injectable) (*ServiceB, error) {
+			Constructor: func(deps Injections) (*ServiceB, error) {
 				return &ServiceB{}, nil
 			},
 		}, false),
 		FactoryProvider[*ServiceC](tokenC, Factory[*ServiceC]{
 			Injects: Inject(tokenB),
-			Constructor: func(deps ...*Injectable) (*ServiceC, error) {
+			Constructor: func(deps Injections) (*ServiceC, error) {
 				return &ServiceC{}, nil
 			},
 		}, false),
@@ -1501,25 +1523,25 @@ func TestCircularProviderDependency_DiamondNoCycle(t *testing.T) {
 	mod := NewModule("app")
 	mod.Provide(
 		FactoryProvider[*ServiceD](tokenD, Factory[*ServiceD]{
-			Constructor: func(deps ...*Injectable) (*ServiceD, error) {
+			Constructor: func(deps Injections) (*ServiceD, error) {
 				return &ServiceD{Name: "d"}, nil
 			},
 		}, false),
 		FactoryProvider[*ServiceB](tokenB, Factory[*ServiceB]{
 			Injects: Inject(tokenD),
-			Constructor: func(deps ...*Injectable) (*ServiceB, error) {
+			Constructor: func(deps Injections) (*ServiceB, error) {
 				return &ServiceB{}, nil
 			},
 		}, false),
 		FactoryProvider[*ServiceC](tokenC, Factory[*ServiceC]{
 			Injects: Inject(tokenD),
-			Constructor: func(deps ...*Injectable) (*ServiceC, error) {
+			Constructor: func(deps Injections) (*ServiceC, error) {
 				return &ServiceC{}, nil
 			},
 		}, false),
 		FactoryProvider[*ServiceA](tokenA, Factory[*ServiceA]{
 			Injects: Inject(tokenB, tokenC),
-			Constructor: func(deps ...*Injectable) (*ServiceA, error) {
+			Constructor: func(deps Injections) (*ServiceA, error) {
 				return &ServiceA{}, nil
 			},
 		}, false),
@@ -1540,25 +1562,25 @@ func TestCircularProviderDependency_DiamondWithCycle(t *testing.T) {
 	mod.Provide(
 		FactoryProvider[*ServiceA](tokenA, Factory[*ServiceA]{
 			Injects: Inject(tokenB, tokenC),
-			Constructor: func(deps ...*Injectable) (*ServiceA, error) {
+			Constructor: func(deps Injections) (*ServiceA, error) {
 				return &ServiceA{}, nil
 			},
 		}, false),
 		FactoryProvider[*ServiceB](tokenB, Factory[*ServiceB]{
 			Injects: Inject(tokenD),
-			Constructor: func(deps ...*Injectable) (*ServiceB, error) {
+			Constructor: func(deps Injections) (*ServiceB, error) {
 				return &ServiceB{}, nil
 			},
 		}, false),
 		FactoryProvider[*ServiceC](tokenC, Factory[*ServiceC]{
 			Injects: Inject(tokenD),
-			Constructor: func(deps ...*Injectable) (*ServiceC, error) {
+			Constructor: func(deps Injections) (*ServiceC, error) {
 				return &ServiceC{}, nil
 			},
 		}, false),
 		FactoryProvider[*ServiceD](tokenD, Factory[*ServiceD]{
 			Injects: Inject(tokenA),
-			Constructor: func(deps ...*Injectable) (*ServiceD, error) {
+			Constructor: func(deps Injections) (*ServiceD, error) {
 				return &ServiceD{}, nil
 			},
 		}, false),
@@ -1587,14 +1609,14 @@ func TestCircularProviderDependency_CrossModule(t *testing.T) {
 
 	modX.Provide(FactoryProvider[*ServiceA](tokenA, Factory[*ServiceA]{
 		Injects: Inject(tokenB),
-		Constructor: func(deps ...*Injectable) (*ServiceA, error) {
+		Constructor: func(deps Injections) (*ServiceA, error) {
 			return &ServiceA{}, nil
 		},
 	}, true))
 
 	modY.Provide(FactoryProvider[*ServiceB](tokenB, Factory[*ServiceB]{
 		Injects: Inject(tokenA),
-		Constructor: func(deps ...*Injectable) (*ServiceB, error) {
+		Constructor: func(deps Injections) (*ServiceB, error) {
 			return &ServiceB{}, nil
 		},
 	}, true))
@@ -1619,13 +1641,13 @@ func TestCircularProviderDependency_GlobalProviderCycle(t *testing.T) {
 	global.Provide(
 		FactoryProvider[*ServiceA](tokenA, Factory[*ServiceA]{
 			Injects: Inject(tokenB),
-			Constructor: func(deps ...*Injectable) (*ServiceA, error) {
+			Constructor: func(deps Injections) (*ServiceA, error) {
 				return &ServiceA{}, nil
 			},
 		}, true),
 		FactoryProvider[*ServiceB](tokenB, Factory[*ServiceB]{
 			Injects: Inject(tokenA),
-			Constructor: func(deps ...*Injectable) (*ServiceB, error) {
+			Constructor: func(deps Injections) (*ServiceB, error) {
 				return &ServiceB{}, nil
 			},
 		}, true),
@@ -1650,13 +1672,13 @@ func TestCircularProviderDependency_ErrorContainsCyclePath(t *testing.T) {
 	mod.Provide(
 		FactoryProvider[*ServiceA](tokenA, Factory[*ServiceA]{
 			Injects: Inject(tokenB),
-			Constructor: func(deps ...*Injectable) (*ServiceA, error) {
+			Constructor: func(deps Injections) (*ServiceA, error) {
 				return &ServiceA{}, nil
 			},
 		}, false),
 		FactoryProvider[*ServiceB](tokenB, Factory[*ServiceB]{
 			Injects: Inject(tokenA),
-			Constructor: func(deps ...*Injectable) (*ServiceB, error) {
+			Constructor: func(deps Injections) (*ServiceB, error) {
 				return &ServiceB{}, nil
 			},
 		}, false),
@@ -1682,13 +1704,13 @@ func TestCircularProviderDependency_ErrorExposesCycleTokens(t *testing.T) {
 	mod.Provide(
 		FactoryProvider[*ServiceA](tokenA, Factory[*ServiceA]{
 			Injects: Inject(tokenB),
-			Constructor: func(deps ...*Injectable) (*ServiceA, error) {
+			Constructor: func(deps Injections) (*ServiceA, error) {
 				return &ServiceA{}, nil
 			},
 		}, false),
 		FactoryProvider[*ServiceB](tokenB, Factory[*ServiceB]{
 			Injects: Inject(tokenA),
-			Constructor: func(deps ...*Injectable) (*ServiceB, error) {
+			Constructor: func(deps Injections) (*ServiceB, error) {
 				return &ServiceB{}, nil
 			},
 		}, false),
@@ -1720,13 +1742,13 @@ func TestCircularProviderDependency_CycleAmidHealthyProviders(t *testing.T) {
 		ValueProvider[*Database]("", &Database{DSN: "pg"}, false),
 		FactoryProvider[*ServiceA](tokenA, Factory[*ServiceA]{
 			Injects: Inject(tokenB),
-			Constructor: func(deps ...*Injectable) (*ServiceA, error) {
+			Constructor: func(deps Injections) (*ServiceA, error) {
 				return &ServiceA{}, nil
 			},
 		}, false),
 		FactoryProvider[*ServiceB](tokenB, Factory[*ServiceB]{
 			Injects: Inject(tokenA),
-			Constructor: func(deps ...*Injectable) (*ServiceB, error) {
+			Constructor: func(deps Injections) (*ServiceB, error) {
 				return &ServiceB{}, nil
 			},
 		}, false),
@@ -1757,14 +1779,14 @@ func TestSingleton_SharedIdentityAcrossConsumers(t *testing.T) {
 	mod.Provide(
 		FactoryProvider[*Counter](counterToken, Factory[*Counter]{
 			ValueScope: Singleton,
-			Constructor: func(deps ...*Injectable) (*Counter, error) {
+			Constructor: func(deps Injections) (*Counter, error) {
 				return &Counter{N: 0}, nil
 			},
 		}, false),
 		FactoryProvider[*ReaderA]("", Factory[*ReaderA]{
 			Injects: Inject(counterToken),
-			Constructor: func(deps ...*Injectable) (*ReaderA, error) {
-				c, err := ResolveFrom[*Counter](counterToken, deps)
+			Constructor: func(deps Injections) (*ReaderA, error) {
+				c, err := Resolve[*Counter](counterToken, deps)
 				if err != nil {
 					return nil, err
 				}
@@ -1774,8 +1796,8 @@ func TestSingleton_SharedIdentityAcrossConsumers(t *testing.T) {
 		}, false),
 		FactoryProvider[*ReaderB]("", Factory[*ReaderB]{
 			Injects: Inject(counterToken),
-			Constructor: func(deps ...*Injectable) (*ReaderB, error) {
-				c, err := ResolveFrom[*Counter](counterToken, deps)
+			Constructor: func(deps Injections) (*ReaderB, error) {
+				c, err := Resolve[*Counter](counterToken, deps)
 				if err != nil {
 					return nil, err
 				}
@@ -1806,22 +1828,22 @@ func TestSingleton_StateMutationVisibleAcrossConsumers(t *testing.T) {
 	mod.Provide(
 		FactoryProvider[*Counter](counterToken, Factory[*Counter]{
 			ValueScope: Singleton,
-			Constructor: func(deps ...*Injectable) (*Counter, error) {
+			Constructor: func(deps Injections) (*Counter, error) {
 				return &Counter{N: 10}, nil
 			},
 		}, false),
 		FactoryProvider[*ReaderA]("", Factory[*ReaderA]{
 			Injects: Inject(counterToken),
-			Constructor: func(deps ...*Injectable) (*ReaderA, error) {
-				c, _ := ResolveFrom[*Counter](counterToken, deps)
+			Constructor: func(deps Injections) (*ReaderA, error) {
+				c, _ := Resolve[*Counter](counterToken, deps)
 				gotA = c
 				return &ReaderA{Counter: c}, nil
 			},
 		}, false),
 		FactoryProvider[*ReaderB]("", Factory[*ReaderB]{
 			Injects: Inject(counterToken),
-			Constructor: func(deps ...*Injectable) (*ReaderB, error) {
-				c, _ := ResolveFrom[*Counter](counterToken, deps)
+			Constructor: func(deps Injections) (*ReaderB, error) {
+				c, _ := Resolve[*Counter](counterToken, deps)
 				gotB = c
 				return &ReaderB{Counter: c}, nil
 			},
@@ -1847,22 +1869,22 @@ func TestPrototype_DifferentInstancePerConsumer(t *testing.T) {
 	mod.Provide(
 		FactoryProvider[*Counter](counterToken, Factory[*Counter]{
 			ValueScope: Prototype,
-			Constructor: func(deps ...*Injectable) (*Counter, error) {
+			Constructor: func(deps Injections) (*Counter, error) {
 				return &Counter{N: 0}, nil
 			},
 		}, false),
 		FactoryProvider[*ReaderA]("", Factory[*ReaderA]{
 			Injects: Inject(counterToken),
-			Constructor: func(deps ...*Injectable) (*ReaderA, error) {
-				c, _ := ResolveFrom[*Counter](counterToken, deps)
+			Constructor: func(deps Injections) (*ReaderA, error) {
+				c, _ := Resolve[*Counter](counterToken, deps)
 				gotA = c
 				return &ReaderA{Counter: c}, nil
 			},
 		}, false),
 		FactoryProvider[*ReaderB]("", Factory[*ReaderB]{
 			Injects: Inject(counterToken),
-			Constructor: func(deps ...*Injectable) (*ReaderB, error) {
-				c, _ := ResolveFrom[*Counter](counterToken, deps)
+			Constructor: func(deps Injections) (*ReaderB, error) {
+				c, _ := Resolve[*Counter](counterToken, deps)
 				gotB = c
 				return &ReaderB{Counter: c}, nil
 			},
@@ -1890,22 +1912,22 @@ func TestPrototype_MutationIsolatedBetweenConsumers(t *testing.T) {
 	mod.Provide(
 		FactoryProvider[*Counter](counterToken, Factory[*Counter]{
 			ValueScope: Prototype,
-			Constructor: func(deps ...*Injectable) (*Counter, error) {
+			Constructor: func(deps Injections) (*Counter, error) {
 				return &Counter{N: 0}, nil
 			},
 		}, false),
 		FactoryProvider[*ReaderA]("", Factory[*ReaderA]{
 			Injects: Inject(counterToken),
-			Constructor: func(deps ...*Injectable) (*ReaderA, error) {
-				c, _ := ResolveFrom[*Counter](counterToken, deps)
+			Constructor: func(deps Injections) (*ReaderA, error) {
+				c, _ := Resolve[*Counter](counterToken, deps)
 				gotA = c
 				return &ReaderA{Counter: c}, nil
 			},
 		}, false),
 		FactoryProvider[*ReaderB]("", Factory[*ReaderB]{
 			Injects: Inject(counterToken),
-			Constructor: func(deps ...*Injectable) (*ReaderB, error) {
-				c, _ := ResolveFrom[*Counter](counterToken, deps)
+			Constructor: func(deps Injections) (*ReaderB, error) {
+				c, _ := Resolve[*Counter](counterToken, deps)
 				gotB = c
 				return &ReaderB{Counter: c}, nil
 			},
@@ -1933,16 +1955,16 @@ func TestSingleton_ValueProviderSharedAcrossConsumers(t *testing.T) {
 		ValueProvider[*Counter](counterToken, counter, false),
 		FactoryProvider[*ReaderA]("", Factory[*ReaderA]{
 			Injects: Inject(counterToken),
-			Constructor: func(deps ...*Injectable) (*ReaderA, error) {
-				c, _ := ResolveFrom[*Counter](counterToken, deps)
+			Constructor: func(deps Injections) (*ReaderA, error) {
+				c, _ := Resolve[*Counter](counterToken, deps)
 				gotA = c
 				return &ReaderA{Counter: c}, nil
 			},
 		}, false),
 		FactoryProvider[*ReaderB]("", Factory[*ReaderB]{
 			Injects: Inject(counterToken),
-			Constructor: func(deps ...*Injectable) (*ReaderB, error) {
-				c, _ := ResolveFrom[*Counter](counterToken, deps)
+			Constructor: func(deps Injections) (*ReaderB, error) {
+				c, _ := Resolve[*Counter](counterToken, deps)
 				gotB = c
 				return &ReaderB{Counter: c}, nil
 			},
@@ -1969,7 +1991,7 @@ func TestSingleton_CrossModuleSharedState(t *testing.T) {
 	infra := NewModule("infra")
 	infra.Provide(FactoryProvider[*Counter](counterToken, Factory[*Counter]{
 		ValueScope: Singleton,
-		Constructor: func(deps ...*Injectable) (*Counter, error) {
+		Constructor: func(deps Injections) (*Counter, error) {
 			return &Counter{N: 0}, nil
 		},
 	}, true))
@@ -1978,8 +2000,8 @@ func TestSingleton_CrossModuleSharedState(t *testing.T) {
 	modA.Import(infra)
 	modA.Provide(FactoryProvider[*ReaderA]("", Factory[*ReaderA]{
 		Injects: Inject(counterToken),
-		Constructor: func(deps ...*Injectable) (*ReaderA, error) {
-			c, _ := ResolveFrom[*Counter](counterToken, deps)
+		Constructor: func(deps Injections) (*ReaderA, error) {
+			c, _ := Resolve[*Counter](counterToken, deps)
 			gotA = c
 			return &ReaderA{Counter: c}, nil
 		},
@@ -1989,8 +2011,8 @@ func TestSingleton_CrossModuleSharedState(t *testing.T) {
 	modB.Import(infra)
 	modB.Provide(FactoryProvider[*ReaderB]("", Factory[*ReaderB]{
 		Injects: Inject(counterToken),
-		Constructor: func(deps ...*Injectable) (*ReaderB, error) {
-			c, _ := ResolveFrom[*Counter](counterToken, deps)
+		Constructor: func(deps Injections) (*ReaderB, error) {
+			c, _ := Resolve[*Counter](counterToken, deps)
 			gotB = c
 			return &ReaderB{Counter: c}, nil
 		},
@@ -2028,8 +2050,8 @@ func TestValueProvider_InjectSlice(t *testing.T) {
 		ValueProvider[[]string](sliceToken, items, false),
 		FactoryProvider[*SliceConsumer]("", Factory[*SliceConsumer]{
 			Injects: Inject(sliceToken),
-			Constructor: func(deps ...*Injectable) (*SliceConsumer, error) {
-				s, err := ResolveFrom[[]string](sliceToken, deps)
+			Constructor: func(deps Injections) (*SliceConsumer, error) {
+				s, err := Resolve[[]string](sliceToken, deps)
 				if err != nil {
 					return nil, err
 				}
@@ -2062,8 +2084,8 @@ func TestValueProvider_InjectMap(t *testing.T) {
 		ValueProvider[map[string]int](mapToken, table, false),
 		FactoryProvider[*MapConsumer]("", Factory[*MapConsumer]{
 			Injects: Inject(mapToken),
-			Constructor: func(deps ...*Injectable) (*MapConsumer, error) {
-				m, err := ResolveFrom[map[string]int](mapToken, deps)
+			Constructor: func(deps Injections) (*MapConsumer, error) {
+				m, err := Resolve[map[string]int](mapToken, deps)
 				if err != nil {
 					return nil, err
 				}
@@ -2094,15 +2116,15 @@ func TestFactoryProvider_InjectSlice(t *testing.T) {
 	mod.Provide(
 		FactoryProvider[*[]string](sliceToken, Factory[*[]string]{
 			ValueScope: Singleton,
-			Constructor: func(deps ...*Injectable) (*[]string, error) {
+			Constructor: func(deps Injections) (*[]string, error) {
 				s := []string{"one", "two", "three"}
 				return &s, nil
 			},
 		}, false),
 		FactoryProvider[*SliceConsumer]("", Factory[*SliceConsumer]{
 			Injects: Inject(sliceToken),
-			Constructor: func(deps ...*Injectable) (*SliceConsumer, error) {
-				s, err := ResolveFrom[*[]string](sliceToken, deps)
+			Constructor: func(deps Injections) (*SliceConsumer, error) {
+				s, err := Resolve[*[]string](sliceToken, deps)
 				if err != nil {
 					return nil, err
 				}
@@ -2133,15 +2155,15 @@ func TestFactoryProvider_InjectMap(t *testing.T) {
 	mod.Provide(
 		FactoryProvider[*map[string]int](mapToken, Factory[*map[string]int]{
 			ValueScope: Singleton,
-			Constructor: func(deps ...*Injectable) (*map[string]int, error) {
+			Constructor: func(deps Injections) (*map[string]int, error) {
 				m := map[string]int{"a": 10, "b": 20}
 				return &m, nil
 			},
 		}, false),
 		FactoryProvider[*MapConsumer]("", Factory[*MapConsumer]{
 			Injects: Inject(mapToken),
-			Constructor: func(deps ...*Injectable) (*MapConsumer, error) {
-				m, err := ResolveFrom[*map[string]int](mapToken, deps)
+			Constructor: func(deps Injections) (*MapConsumer, error) {
+				m, err := Resolve[*map[string]int](mapToken, deps)
 				if err != nil {
 					return nil, err
 				}
@@ -2174,16 +2196,16 @@ func TestValueProvider_SharedSliceStateBetweenConsumers(t *testing.T) {
 		ValueProvider[[]string](sliceToken, items, false),
 		FactoryProvider[*ReaderA]("SliceReaderA", Factory[*ReaderA]{
 			Injects: Inject(sliceToken),
-			Constructor: func(deps ...*Injectable) (*ReaderA, error) {
-				s, _ := ResolveFrom[[]string](sliceToken, deps)
+			Constructor: func(deps Injections) (*ReaderA, error) {
+				s, _ := Resolve[[]string](sliceToken, deps)
 				gotA = s
 				return &ReaderA{}, nil
 			},
 		}, false),
 		FactoryProvider[*ReaderB]("SliceReaderB", Factory[*ReaderB]{
 			Injects: Inject(sliceToken),
-			Constructor: func(deps ...*Injectable) (*ReaderB, error) {
-				s, _ := ResolveFrom[[]string](sliceToken, deps)
+			Constructor: func(deps Injections) (*ReaderB, error) {
+				s, _ := Resolve[[]string](sliceToken, deps)
 				gotB = s
 				return &ReaderB{}, nil
 			},
@@ -2211,16 +2233,16 @@ func TestValueProvider_SharedMapStateBetweenConsumers(t *testing.T) {
 		ValueProvider[map[string]int](mapToken, table, false),
 		FactoryProvider[*ReaderA]("MapReaderA", Factory[*ReaderA]{
 			Injects: Inject(mapToken),
-			Constructor: func(deps ...*Injectable) (*ReaderA, error) {
-				m, _ := ResolveFrom[map[string]int](mapToken, deps)
+			Constructor: func(deps Injections) (*ReaderA, error) {
+				m, _ := Resolve[map[string]int](mapToken, deps)
 				gotA = m
 				return &ReaderA{}, nil
 			},
 		}, false),
 		FactoryProvider[*ReaderB]("MapReaderB", Factory[*ReaderB]{
 			Injects: Inject(mapToken),
-			Constructor: func(deps ...*Injectable) (*ReaderB, error) {
-				m, _ := ResolveFrom[map[string]int](mapToken, deps)
+			Constructor: func(deps Injections) (*ReaderB, error) {
+				m, _ := Resolve[map[string]int](mapToken, deps)
 				gotB = m
 				return &ReaderB{}, nil
 			},
@@ -2250,23 +2272,23 @@ func TestSingleton_FactorySliceSharedState(t *testing.T) {
 	mod.Provide(
 		FactoryProvider[*[]string](sliceToken, Factory[*[]string]{
 			ValueScope: Singleton,
-			Constructor: func(deps ...*Injectable) (*[]string, error) {
+			Constructor: func(deps Injections) (*[]string, error) {
 				s := []string{"hello"}
 				return &s, nil
 			},
 		}, false),
 		FactoryProvider[*ReaderA]("FSliceReaderA", Factory[*ReaderA]{
 			Injects: Inject(sliceToken),
-			Constructor: func(deps ...*Injectable) (*ReaderA, error) {
-				s, _ := ResolveFrom[*[]string](sliceToken, deps)
+			Constructor: func(deps Injections) (*ReaderA, error) {
+				s, _ := Resolve[*[]string](sliceToken, deps)
 				gotA = s
 				return &ReaderA{}, nil
 			},
 		}, false),
 		FactoryProvider[*ReaderB]("FSliceReaderB", Factory[*ReaderB]{
 			Injects: Inject(sliceToken),
-			Constructor: func(deps ...*Injectable) (*ReaderB, error) {
-				s, _ := ResolveFrom[*[]string](sliceToken, deps)
+			Constructor: func(deps Injections) (*ReaderB, error) {
+				s, _ := Resolve[*[]string](sliceToken, deps)
 				gotB = s
 				return &ReaderB{}, nil
 			},
@@ -2295,23 +2317,23 @@ func TestSingleton_FactoryMapSharedState(t *testing.T) {
 	mod.Provide(
 		FactoryProvider[*map[string]int](mapToken, Factory[*map[string]int]{
 			ValueScope: Singleton,
-			Constructor: func(deps ...*Injectable) (*map[string]int, error) {
+			Constructor: func(deps Injections) (*map[string]int, error) {
 				m := map[string]int{"init": 1}
 				return &m, nil
 			},
 		}, false),
 		FactoryProvider[*ReaderA]("FMapReaderA", Factory[*ReaderA]{
 			Injects: Inject(mapToken),
-			Constructor: func(deps ...*Injectable) (*ReaderA, error) {
-				m, _ := ResolveFrom[*map[string]int](mapToken, deps)
+			Constructor: func(deps Injections) (*ReaderA, error) {
+				m, _ := Resolve[*map[string]int](mapToken, deps)
 				gotA = m
 				return &ReaderA{}, nil
 			},
 		}, false),
 		FactoryProvider[*ReaderB]("FMapReaderB", Factory[*ReaderB]{
 			Injects: Inject(mapToken),
-			Constructor: func(deps ...*Injectable) (*ReaderB, error) {
-				m, _ := ResolveFrom[*map[string]int](mapToken, deps)
+			Constructor: func(deps Injections) (*ReaderB, error) {
+				m, _ := Resolve[*map[string]int](mapToken, deps)
 				gotB = m
 				return &ReaderB{}, nil
 			},
@@ -2340,23 +2362,23 @@ func TestPrototype_FactorySliceIsolated(t *testing.T) {
 	mod.Provide(
 		FactoryProvider[*[]string](sliceToken, Factory[*[]string]{
 			ValueScope: Prototype,
-			Constructor: func(deps ...*Injectable) (*[]string, error) {
+			Constructor: func(deps Injections) (*[]string, error) {
 				s := []string{"base"}
 				return &s, nil
 			},
 		}, false),
 		FactoryProvider[*ReaderA]("PSliceReaderA", Factory[*ReaderA]{
 			Injects: Inject(sliceToken),
-			Constructor: func(deps ...*Injectable) (*ReaderA, error) {
-				s, _ := ResolveFrom[*[]string](sliceToken, deps)
+			Constructor: func(deps Injections) (*ReaderA, error) {
+				s, _ := Resolve[*[]string](sliceToken, deps)
 				gotA = s
 				return &ReaderA{}, nil
 			},
 		}, false),
 		FactoryProvider[*ReaderB]("PSliceReaderB", Factory[*ReaderB]{
 			Injects: Inject(sliceToken),
-			Constructor: func(deps ...*Injectable) (*ReaderB, error) {
-				s, _ := ResolveFrom[*[]string](sliceToken, deps)
+			Constructor: func(deps Injections) (*ReaderB, error) {
+				s, _ := Resolve[*[]string](sliceToken, deps)
 				gotB = s
 				return &ReaderB{}, nil
 			},
@@ -2385,23 +2407,23 @@ func TestPrototype_FactoryMapIsolated(t *testing.T) {
 	mod.Provide(
 		FactoryProvider[*map[string]int](mapToken, Factory[*map[string]int]{
 			ValueScope: Prototype,
-			Constructor: func(deps ...*Injectable) (*map[string]int, error) {
+			Constructor: func(deps Injections) (*map[string]int, error) {
 				m := map[string]int{"base": 1}
 				return &m, nil
 			},
 		}, false),
 		FactoryProvider[*ReaderA]("PMapReaderA", Factory[*ReaderA]{
 			Injects: Inject(mapToken),
-			Constructor: func(deps ...*Injectable) (*ReaderA, error) {
-				m, _ := ResolveFrom[*map[string]int](mapToken, deps)
+			Constructor: func(deps Injections) (*ReaderA, error) {
+				m, _ := Resolve[*map[string]int](mapToken, deps)
 				gotA = m
 				return &ReaderA{}, nil
 			},
 		}, false),
 		FactoryProvider[*ReaderB]("PMapReaderB", Factory[*ReaderB]{
 			Injects: Inject(mapToken),
-			Constructor: func(deps ...*Injectable) (*ReaderB, error) {
-				m, _ := ResolveFrom[*map[string]int](mapToken, deps)
+			Constructor: func(deps Injections) (*ReaderB, error) {
+				m, _ := Resolve[*map[string]int](mapToken, deps)
 				gotB = m
 				return &ReaderB{}, nil
 			},
@@ -2426,8 +2448,8 @@ func TestPrototype_FactoryMapIsolated(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestResolve_HappyPath(t *testing.T) {
-	inj := &Injectable{Token: "Logger", Instance: &Logger{Prefix: "ok"}}
-	log, err := Resolve[*Logger](inj)
+	inj := &Injection{Token: "Logger", Instance: &Logger{Prefix: "ok"}}
+	log, err := Resolve[*Logger]("Logger", Injections{inj})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2437,23 +2459,23 @@ func TestResolve_HappyPath(t *testing.T) {
 }
 
 func TestResolve_WrongType(t *testing.T) {
-	inj := &Injectable{Token: "Logger", Instance: "not-a-logger"}
-	_, err := Resolve[*Logger](inj)
+	inj := &Injection{Token: "Logger", Instance: "not-a-logger"}
+	_, err := Resolve[*Logger]("Logger", Injections{inj})
 	if err == nil {
 		t.Fatal("expected error for wrong type")
 	}
 }
 
 func TestResolve_NilInjectionReturnsError(t *testing.T) {
-	_, err := Resolve[*Logger](nil)
+	_, err := Resolve[*Logger]("Logger", Injections{nil})
 	if err == nil {
 		t.Fatal("expected error for nil injection")
 	}
 }
 
 func TestResolve_NilInstanceWrongTypeReturnsError(t *testing.T) {
-	inj := &Injectable{Token: "Logger", Instance: nil}
-	_, err := Resolve[*Logger](inj)
+	inj := &Injection{Token: "Logger", Instance: nil}
+	_, err := Resolve[*Logger]("Logger", Injections{inj})
 	if err == nil {
 		t.Fatal("expected error for nil instance")
 	}
@@ -2462,8 +2484,8 @@ func TestResolve_NilInstanceWrongTypeReturnsError(t *testing.T) {
 func TestResolve_Interface(t *testing.T) {
 	var w strings.Builder
 	w.WriteString("hello")
-	inj := &Injectable{Token: "Builder", Instance: &w}
-	got, err := Resolve[*strings.Builder](inj)
+	inj := &Injection{Token: "Builder", Instance: &w}
+	got, err := Resolve[*strings.Builder]("Builder", Injections{inj})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2472,12 +2494,88 @@ func TestResolve_Interface(t *testing.T) {
 	}
 }
 
+func TestResolve_FromInjections(t *testing.T) {
+	injections := Injections{
+		{Token: "Logger", Instance: &Logger{Prefix: "ok"}},
+	}
+
+	log, err := Resolve[*Logger]("Logger", injections)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if log.Prefix != "ok" {
+		t.Fatalf("expected prefix ok, got %s", log.Prefix)
+	}
+}
+
+func TestInjections_Resolve(t *testing.T) {
+	want := &Logger{}
+	injections := Injections{{Token: "Logger", Instance: want}}
+
+	got, err := injections.Resolve("Logger")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != want {
+		t.Fatal("expected Resolve to return the matching instance")
+	}
+}
+
+func TestMustResolve_HappyPath(t *testing.T) {
+	injections := Injections{
+		{Token: "Logger", Instance: &Logger{Prefix: "ok"}},
+	}
+
+	log := MustResolve[*Logger]("Logger", injections)
+	if log.Prefix != "ok" {
+		t.Fatalf("expected prefix ok, got %s", log.Prefix)
+	}
+}
+
+func TestMustResolve_PanicsOnError(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic for missing token")
+		}
+		if _, ok := r.(*DependencyError); !ok {
+			t.Fatalf("expected DependencyError panic, got %T", r)
+		}
+	}()
+
+	MustResolve[*Logger]("Logger", nil)
+}
+
+func TestInjections_MustResolve(t *testing.T) {
+	want := &Logger{}
+	injections := Injections{{Token: "Logger", Instance: want}}
+
+	got := injections.MustResolve("Logger")
+	if got != want {
+		t.Fatal("expected MustResolve to return the matching instance")
+	}
+}
+
+func TestInjections_MustResolvePanicsOnError(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic for missing token")
+		}
+		if _, ok := r.(*DependencyError); !ok {
+			t.Fatalf("expected DependencyError panic, got %T", r)
+		}
+	}()
+
+	Injections(nil).MustResolve("Logger")
+}
+
 // ---------------------------------------------------------------------------
 // Require helper
 // ---------------------------------------------------------------------------
 
 func TestRequire_AllPresent(t *testing.T) {
-	injections := []*Injectable{
+	injections := []*Injection{
 		{Token: "Logger", Instance: &Logger{}},
 		{Token: "Database", Instance: &Database{}},
 	}
@@ -2486,7 +2584,7 @@ func TestRequire_AllPresent(t *testing.T) {
 }
 
 func TestRequire_MissingToken_Panics(t *testing.T) {
-	injections := []*Injectable{
+	injections := []*Injection{
 		{Token: "Logger", Instance: &Logger{}},
 	}
 	defer func() {
@@ -2517,12 +2615,21 @@ func TestRequire_NilInjection_PanicsWithDependencyError(t *testing.T) {
 		}
 	}()
 
-	Require([]*Injectable{nil}, "Logger")
+	Require([]*Injection{nil}, "Logger")
 }
 
 func TestRequire_NoTokens_NoOp(t *testing.T) {
 	// zero required tokens — must not panic even with empty injections
 	Require(nil)
+}
+
+func TestInjections_Require(t *testing.T) {
+	injections := Injections{
+		{Token: "Logger", Instance: &Logger{}},
+	}
+
+	// should not panic
+	injections.Require("Logger")
 }
 
 // ---------------------------------------------------------------------------
@@ -2578,7 +2685,7 @@ func TestContainer_FactoryConstructorError_PropagatesOnRun(t *testing.T) {
 	mod := NewModule("app")
 	mod.Provide(FactoryProvider[*Logger]("", Factory[*Logger]{
 		ValueScope: Singleton,
-		Constructor: func(deps ...*Injectable) (*Logger, error) {
+		Constructor: func(deps Injections) (*Logger, error) {
 			return nil, &DependencyError{reason: "simulated construction failure"}
 		},
 	}, false))
@@ -2594,7 +2701,7 @@ func TestContainer_MissingDependency_ReturnsError(t *testing.T) {
 	mod := NewModule("app")
 	mod.Provide(FactoryProvider[*UserService]("", Factory[*UserService]{
 		Injects: Inject("Logger"), // Logger is never provided
-		Constructor: func(deps ...*Injectable) (*UserService, error) {
+		Constructor: func(deps Injections) (*UserService, error) {
 			return &UserService{}, nil
 		},
 	}, false))
@@ -2611,7 +2718,7 @@ func TestContainer_MissingDependency_ErrorMentionsMissingToken(t *testing.T) {
 	mod := NewModule("app")
 	mod.Provide(FactoryProvider[*UserService]("", Factory[*UserService]{
 		Injects: Inject(missingToken),
-		Constructor: func(deps ...*Injectable) (*UserService, error) {
+		Constructor: func(deps Injections) (*UserService, error) {
 			return &UserService{}, nil
 		},
 	}, false))
@@ -2658,8 +2765,8 @@ func TestContainer_NonExportedDep_NotAccessibleWhenDirectlyImported(t *testing.T
 	app.Import(infra)
 	app.Provide(FactoryProvider[*UserService]("", Factory[*UserService]{
 		Injects: Inject(logToken),
-		Constructor: func(deps ...*Injectable) (*UserService, error) {
-			log, err := ResolveFrom[*Logger](logToken, deps)
+		Constructor: func(deps Injections) (*UserService, error) {
+			log, err := Resolve[*Logger](logToken, deps)
 			if err != nil {
 				return nil, err
 			}
@@ -2694,12 +2801,12 @@ func TestContainer_MultipleGlobalModules_BothAccessible(t *testing.T) {
 	app := NewModule("app") // no explicit import — globals are visible container-wide
 	app.Provide(FactoryProvider[*UserService]("", Factory[*UserService]{
 		Injects: Inject(logToken, dbToken),
-		Constructor: func(deps ...*Injectable) (*UserService, error) {
-			log, err := ResolveFrom[*Logger](logToken, deps)
+		Constructor: func(deps Injections) (*UserService, error) {
+			log, err := Resolve[*Logger](logToken, deps)
 			if err != nil {
 				return nil, err
 			}
-			db, err := ResolveFrom[*Database](dbToken, deps)
+			db, err := Resolve[*Database](dbToken, deps)
 			if err != nil {
 				return nil, err
 			}
@@ -2732,8 +2839,8 @@ func TestContainer_GlobalModuleCanResolveLaterGlobalModule(t *testing.T) {
 	var gotLog *Logger
 	firstGlobal.Provide(FactoryProvider[*Database](dbToken, Factory[*Database]{
 		Injects: Inject(logToken),
-		Constructor: func(deps ...*Injectable) (*Database, error) {
-			log, err := ResolveFrom[*Logger](logToken, deps)
+		Constructor: func(deps Injections) (*Database, error) {
+			log, err := Resolve[*Logger](logToken, deps)
 			if err != nil {
 				return nil, err
 			}
@@ -2771,8 +2878,8 @@ func TestContainer_GlobalModule_OwnModuleBeatsGlobal(t *testing.T) {
 		ValueProvider[*Logger]("", &Logger{Prefix: "local"}, false),
 		FactoryProvider[*UserService]("", Factory[*UserService]{
 			Injects: Inject(logToken),
-			Constructor: func(deps ...*Injectable) (*UserService, error) {
-				log, err := ResolveFrom[*Logger](logToken, deps)
+			Constructor: func(deps Injections) (*UserService, error) {
+				log, err := Resolve[*Logger](logToken, deps)
 				if err != nil {
 					return nil, err
 				}
@@ -2839,8 +2946,8 @@ func TestProductionLike_LayeredApp(t *testing.T) {
 		FactoryProvider[*DBPool](poolToken, Factory[*DBPool]{
 			Injects:    Inject(configToken),
 			ValueScope: Singleton,
-			Constructor: func(deps ...*Injectable) (*DBPool, error) {
-				cfg, err := ResolveFrom[*AppConfig](configToken, deps)
+			Constructor: func(deps Injections) (*DBPool, error) {
+				cfg, err := Resolve[*AppConfig](configToken, deps)
 				if err != nil {
 					return nil, err
 				}
@@ -2850,12 +2957,12 @@ func TestProductionLike_LayeredApp(t *testing.T) {
 		FactoryProvider[*UserRepository](repoToken, Factory[*UserRepository]{
 			Injects:    Inject(poolToken, configToken),
 			ValueScope: Singleton,
-			Constructor: func(deps ...*Injectable) (*UserRepository, error) {
-				pool, err := ResolveFrom[*DBPool](poolToken, deps)
+			Constructor: func(deps Injections) (*UserRepository, error) {
+				pool, err := Resolve[*DBPool](poolToken, deps)
 				if err != nil {
 					return nil, err
 				}
-				cfg, err := ResolveFrom[*AppConfig](configToken, deps)
+				cfg, err := Resolve[*AppConfig](configToken, deps)
 				if err != nil {
 					return nil, err
 				}
@@ -2865,12 +2972,12 @@ func TestProductionLike_LayeredApp(t *testing.T) {
 		FactoryProvider[*UserService](userSvcToken, Factory[*UserService]{
 			Injects:    Inject(logToken, repoToken),
 			ValueScope: Singleton,
-			Constructor: func(deps ...*Injectable) (*UserService, error) {
-				log, err := ResolveFrom[*Logger](logToken, deps)
+			Constructor: func(deps Injections) (*UserService, error) {
+				log, err := Resolve[*Logger](logToken, deps)
 				if err != nil {
 					return nil, err
 				}
-				repo, err := ResolveFrom[*UserRepository](repoToken, deps)
+				repo, err := Resolve[*UserRepository](repoToken, deps)
 				if err != nil {
 					return nil, err
 				}
@@ -2887,12 +2994,12 @@ func TestProductionLike_LayeredApp(t *testing.T) {
 	apiMod.Provide(FactoryProvider[*UserController]("", Factory[*UserController]{
 		Injects:    Inject(userSvcToken, logToken),
 		ValueScope: Singleton,
-		Constructor: func(deps ...*Injectable) (*UserController, error) {
-			svc, err := ResolveFrom[*UserService](userSvcToken, deps)
+		Constructor: func(deps Injections) (*UserController, error) {
+			svc, err := Resolve[*UserService](userSvcToken, deps)
 			if err != nil {
 				return nil, err
 			}
-			log, err := ResolveFrom[*Logger](logToken, deps)
+			log, err := Resolve[*Logger](logToken, deps)
 			if err != nil {
 				return nil, err
 			}
@@ -2933,8 +3040,8 @@ func TestProductionLike_FactoryErrorBubblesUp(t *testing.T) {
 	dbMod.Provide(FactoryProvider[*DBPool](poolToken, Factory[*DBPool]{
 		Injects:    Inject(configToken),
 		ValueScope: Singleton,
-		Constructor: func(deps ...*Injectable) (*DBPool, error) {
-			cfg, _ := ResolveFrom[*AppConfig](configToken, deps)
+		Constructor: func(deps Injections) (*DBPool, error) {
+			cfg, _ := Resolve[*AppConfig](configToken, deps)
 			if cfg.DSN == "" {
 				return nil, &DependencyError{reason: "DSN must not be empty"}
 			}

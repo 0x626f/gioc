@@ -61,8 +61,8 @@ func main() {
         gioc.FactoryProvider[*DB](dbToken, gioc.Factory[*DB]{
             Injects:    gioc.Inject(configToken),
             ValueScope: gioc.Singleton,
-            Constructor: func(deps ...*gioc.Injectable) (*DB, error) {
-                cfg, err := gioc.ResolveFrom[*Config](configToken, deps)
+            Constructor: func(deps gioc.Injections) (*DB, error) {
+                cfg, err := gioc.Resolve[*Config](configToken, deps)
                 if err != nil {
                     return nil, err
                 }
@@ -73,8 +73,8 @@ func main() {
         gioc.FactoryProvider[*App]("", gioc.Factory[*App]{
             Injects:    gioc.Inject(dbToken),
             ValueScope: gioc.Singleton,
-            Constructor: func(deps ...*gioc.Injectable) (*App, error) {
-                db, err := gioc.ResolveFrom[*DB](dbToken, deps)
+            Constructor: func(deps gioc.Injections) (*App, error) {
+                db, err := gioc.Resolve[*DB](dbToken, deps)
                 if err != nil {
                     return nil, err
                 }
@@ -121,12 +121,26 @@ Constructs the instance via a function. Supports both `Singleton` and `Prototype
 gioc.FactoryProvider[*Service]("", gioc.Factory[*Service]{
     Injects:     gioc.Inject("Logger", "Database"),
     ValueScope:  gioc.Singleton,
-    Constructor: func(deps ...*gioc.Injectable) (*Service, error) {
-        log, _ := gioc.ResolveFrom[*Logger]("Logger", deps)
-        db,  _ := gioc.ResolveFrom[*Database]("Database", deps)
+    Constructor: func(deps gioc.Injections) (*Service, error) {
+        log, _ := gioc.Resolve[*Logger]("Logger", deps)
+        db,  _ := gioc.Resolve[*Database]("Database", deps)
         return &Service{Log: log, DB: db}, nil
     },
 }, false)
+```
+
+The same factory can be built with `NewFactory`:
+
+```go
+factory := gioc.NewFactory[*Service](
+    gioc.Inject("Logger", "Database"),
+    gioc.Singleton,
+    func(deps gioc.Injections) (*Service, error) {
+        log, _ := gioc.Resolve[*Logger]("Logger", deps)
+        db,  _ := gioc.Resolve[*Database]("Database", deps)
+        return &Service{Log: log, DB: db}, nil
+    },
+)
 ```
 
 ### Token auto-derivation
@@ -153,8 +167,8 @@ appMod.Import(infraMod)   // providers of infraMod are visible here
 appMod.Provide(
     gioc.FactoryProvider[*Service]("", gioc.Factory[*Service]{
         Injects: gioc.Inject(gioc.CreateToken[Logger]()),
-        Constructor: func(deps ...*gioc.Injectable) (*Service, error) {
-            log, _ := gioc.ResolveFrom[*Logger](gioc.CreateToken[Logger](), deps)
+        Constructor: func(deps gioc.Injections) (*Service, error) {
+            log, _ := gioc.Resolve[*Logger](gioc.CreateToken[Logger](), deps)
             return &Service{Log: log}, nil
         },
     }, false),
@@ -172,8 +186,8 @@ sharedMod.Provide(gioc.ValueProvider[*Logger]("", &Logger{}, false))
 appMod := gioc.NewModule("app") // no Import(sharedMod) required
 appMod.Provide(gioc.FactoryProvider[*Service]("", gioc.Factory[*Service]{
     Injects: gioc.Inject(gioc.CreateToken[Logger]()),
-    Constructor: func(deps ...*gioc.Injectable) (*Service, error) {
-        log, _ := gioc.ResolveFrom[*Logger](gioc.CreateToken[Logger](), deps)
+    Constructor: func(deps gioc.Injections) (*Service, error) {
+        log, _ := gioc.Resolve[*Logger](gioc.CreateToken[Logger](), deps)
         return &Service{Log: log}, nil
     },
 }, false))
@@ -199,11 +213,11 @@ gioc.NewModule("app").
 
 ## Resolving dependencies in constructors
 
-### ResolveFrom — find by token in the deps slice
+### Resolve — find by token in Injections
 
 ```go
-Constructor: func(deps ...*gioc.Injectable) (*Service, error) {
-    db, err := gioc.ResolveFrom[*Database]("Database", deps)
+Constructor: func(deps gioc.Injections) (*Service, error) {
+    db, err := gioc.Resolve[*Database]("Database", deps)
     if err != nil {
         return nil, err
     }
@@ -211,13 +225,16 @@ Constructor: func(deps ...*gioc.Injectable) (*Service, error) {
 },
 ```
 
-### Resolve — unwrap a single Injectable
+Use `MustResolve` when a missing or incorrectly typed dependency should panic:
 
 ```go
-db, err := gioc.Resolve[*Database](inj)
+Constructor: func(deps gioc.Injections) (*Service, error) {
+    db := gioc.MustResolve[*Database]("Database", deps)
+    return &Service{DB: db}, nil
+},
 ```
 
-### Container.Resolve — fetch a provider after Run
+### Container.Resolve — fetch a raw provider after Run
 
 Singleton providers return the instance created during `Run`; prototype providers create a fresh instance for each call.
 
@@ -226,12 +243,12 @@ inj, err := c.Resolve("Database", appMod)
 if err != nil {
     return err
 }
-db, err := gioc.Resolve[*Database](inj)
+_ = inj
 ```
 
 ### Get — fetch and unwrap after Run
 
-`Get` combines `Container.Resolve` and `Resolve` when callers want a typed value directly. If no module context is provided, it searches the container's root modules in registration order.
+`Get` combines `Container.Resolve` with type assertion when callers want a typed value directly. If no module context is provided, it searches the container's root modules in registration order.
 
 ```go
 db, err := gioc.Get[*Database](c, "Database", appMod)
@@ -243,10 +260,18 @@ if err != nil {
 ### Require — panic-guard at the top of a constructor
 
 ```go
-Constructor: func(deps ...*gioc.Injectable) (*Service, error) {
+Constructor: func(deps gioc.Injections) (*Service, error) {
     gioc.Require(deps, "Logger", "Database") // panics if either is missing
     ...
 },
+```
+
+`Injections` also exposes methods for non-generic lookup and validation:
+
+```go
+instance, err := deps.Resolve("Logger")
+required := deps.MustResolve("Database")
+deps.Require("Logger", "Database")
 ```
 
 ---
@@ -314,24 +339,24 @@ svcMod.Provide(
     gioc.FactoryProvider[*DBPool](tokenPool, gioc.Factory[*DBPool]{
         Injects:    gioc.Inject(tokenConfig),
         ValueScope: gioc.Singleton,
-        Constructor: func(deps ...*gioc.Injectable) (*DBPool, error) {
-            cfg, _ := gioc.ResolveFrom[*AppConfig](tokenConfig, deps)
+        Constructor: func(deps gioc.Injections) (*DBPool, error) {
+            cfg, _ := gioc.Resolve[*AppConfig](tokenConfig, deps)
             return &DBPool{DSN: cfg.DSN}, nil
         },
     }, true),
     gioc.FactoryProvider[*UserRepo](tokenRepo, gioc.Factory[*UserRepo]{
         Injects:    gioc.Inject(tokenPool),
         ValueScope: gioc.Singleton,
-        Constructor: func(deps ...*gioc.Injectable) (*UserRepo, error) {
-            pool, _ := gioc.ResolveFrom[*DBPool](tokenPool, deps)
+        Constructor: func(deps gioc.Injections) (*UserRepo, error) {
+            pool, _ := gioc.Resolve[*DBPool](tokenPool, deps)
             return &UserRepo{Pool: pool}, nil
         },
     }, true),
     gioc.FactoryProvider[*UserSvc](tokenSvc, gioc.Factory[*UserSvc]{
         Injects:    gioc.Inject(tokenRepo),
         ValueScope: gioc.Singleton,
-        Constructor: func(deps ...*gioc.Injectable) (*UserSvc, error) {
-            repo, _ := gioc.ResolveFrom[*UserRepo](tokenRepo, deps)
+        Constructor: func(deps gioc.Injections) (*UserSvc, error) {
+            repo, _ := gioc.Resolve[*UserRepo](tokenRepo, deps)
             return &UserSvc{Repo: repo}, nil
         },
     }, true),

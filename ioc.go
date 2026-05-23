@@ -4,7 +4,7 @@ import "sync"
 
 type metadata struct {
 	loaded    map[*Module]struct{}
-	instances map[IProvider]*Injectable
+	instances map[IProvider]*Injection
 }
 
 // Container is the top-level dependency injection container.
@@ -25,7 +25,7 @@ func NewContainer() *Container {
 	return &Container{
 		meta: &metadata{
 			loaded:    make(map[*Module]struct{}),
-			instances: make(map[IProvider]*Injectable),
+			instances: make(map[IProvider]*Injection),
 		},
 	}
 }
@@ -113,12 +113,12 @@ func (container *Container) Run() (err error) {
 	return
 }
 
-func (container *Container) cached(provider IProvider) (*Injectable, bool) {
+func (container *Container) cached(provider IProvider) (*Injection, bool) {
 	injection, ok := container.meta.instances[provider]
 	return injection, ok
 }
 
-func (container *Container) cache(provider IProvider, injection *Injectable) {
+func (container *Container) cache(provider IProvider, injection *Injection) {
 	container.meta.instances[provider] = injection
 }
 
@@ -126,7 +126,7 @@ func (container *Container) cache(provider IProvider, injection *Injectable) {
 // Call Run before using Resolve so the dependency graph has already been
 // validated. If no modules are provided, Resolve searches the container's root
 // modules in registration order. The first module that can see the token wins.
-func (container *Container) Resolve(token Token, modules ...*Module) (*Injectable, error) {
+func (container *Container) Resolve(token Token, modules ...*Module) (*Injection, error) {
 	container.mu.Lock()
 	defer container.mu.Unlock()
 
@@ -155,14 +155,14 @@ func (container *Container) Resolve(token Token, modules ...*Module) (*Injectabl
 }
 
 // Get resolves token from the container and type-asserts the resulting
-// instance to T. It is a typed convenience wrapper around Container.Resolve and
-// Resolve. Call Run before using Get.
+// instance to T. It is a typed convenience wrapper around Container.Resolve.
+// Call Run before using Get.
 func Get[T any](container *Container, token Token, modules ...*Module) (T, error) {
 	injection, err := container.Resolve(token, modules...)
 	if err != nil {
 		return zero[T](), err
 	}
-	return Resolve[T](injection)
+	return resolveInjection[T](injection)
 }
 
 // lookup resolves a token for the given module context. It first searches the
@@ -297,11 +297,11 @@ func (container *Container) initModules(modules ...*Module) (err error) {
 
 // createObject recursively resolves all declared dependencies of the provider
 // and calls its Create method with the fully-built injection list.
-func (container *Container) createObject(provider IProvider) (*Injectable, error) {
+func (container *Container) createObject(provider IProvider) (*Injection, error) {
 	return container.createObjectWithPath(provider, nil, nil)
 }
 
-func (container *Container) createObjectWithPath(provider IProvider, path map[IProvider]struct{}, tokens []Token) (*Injectable, error) {
+func (container *Container) createObjectWithPath(provider IProvider, path map[IProvider]struct{}, tokens []Token) (*Injection, error) {
 	if provider == nil {
 		return nil, nilProvider()
 	}
@@ -324,10 +324,10 @@ func (container *Container) createObjectWithPath(provider IProvider, path map[IP
 	defer delete(path, provider)
 
 	var err error
-	var injections []*Injectable
+	var injections Injections
 
 	for _, injection := range provider.Injections() {
-		var built *Injectable
+		var built *Injection
 		observed := container.lookup(provider.AssignedTo(), injection)
 		if observed == nil {
 			return nil, missingDependency(provider, injection)
@@ -341,7 +341,7 @@ func (container *Container) createObjectWithPath(provider IProvider, path map[IP
 		injections = append(injections, built)
 	}
 
-	built, err := provider.Create(injections...)
+	built, err := provider.Create(injections)
 	if err != nil {
 		return nil, err
 	}
