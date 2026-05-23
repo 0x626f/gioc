@@ -75,7 +75,7 @@ func mustRun(t *testing.T, c *Container) {
 	}
 }
 
-func TestObjectProvider_CreateReturnsInjectable(t *testing.T) {
+func TestObjectProvider_CreateReturnsInjection(t *testing.T) {
 	db := &Database{DSN: "postgres://localhost"}
 	p := ValueProvider[*Database]("", db, false)
 
@@ -172,7 +172,7 @@ func TestFactoryProvider_Prototype(t *testing.T) {
 		t.Fatalf("factory should be called twice for Prototype, got %d", calls)
 	}
 	if a == b {
-		t.Fatal("Prototype should return different Injectable pointers")
+		t.Fatal("Prototype should return different Injection pointers")
 	}
 }
 
@@ -198,7 +198,7 @@ func TestFactoryProvider_Singleton(t *testing.T) {
 		t.Fatalf("factory should be called once for Singleton, got %d", calls)
 	}
 	if a != b {
-		t.Fatal("Singleton should return the same Injectable pointer")
+		t.Fatal("Singleton should return the same Injection pointer")
 	}
 }
 
@@ -316,7 +316,7 @@ func TestNewFactory(t *testing.T) {
 		return &Logger{Prefix: "new"}, nil
 	}
 
-	factory := NewFactory[*Logger](Inject("Logger"), constructor, Prototype)
+	factory := NewFactory[*Logger](Inject("Logger"), Prototype, constructor)
 
 	if len(factory.Injects) != 1 || factory.Injects[0] != "Logger" {
 		t.Fatalf("unexpected injects: %v", factory.Injects)
@@ -920,7 +920,7 @@ func TestContainer_ResolveReturnsCreatedInstanceAfterRun(t *testing.T) {
 	}
 
 	if first != second {
-		t.Fatal("Resolve should return the cached Injectable created during Run")
+		t.Fatal("Resolve should return the cached Injection created during Run")
 	}
 	if calls != 1 {
 		t.Fatalf("Resolve should not recreate the factory instance, got %d calls", calls)
@@ -946,7 +946,7 @@ func TestContainer_ResolveValueProviderUsesContainerSingletonCache(t *testing.T)
 	}
 
 	if first != second {
-		t.Fatal("singleton ValueProvider should return the cached Injectable wrapper")
+		t.Fatal("singleton ValueProvider should return the cached Injection wrapper")
 	}
 }
 
@@ -1018,7 +1018,7 @@ func TestContainer_ResolveSingletonIsConcurrentSafe(t *testing.T) {
 	}
 	for i := 1; i < workers; i++ {
 		if results[i] != results[0] {
-			t.Fatal("all concurrent singleton Resolve calls should return the same Injectable")
+			t.Fatal("all concurrent singleton Resolve calls should return the same Injection")
 		}
 	}
 
@@ -1059,7 +1059,7 @@ func TestContainer_ResolvePrototypeCreatesNewInstance(t *testing.T) {
 	}
 
 	if first == second {
-		t.Fatal("prototype Resolve should return a fresh Injectable")
+		t.Fatal("prototype Resolve should return a fresh Injection")
 	}
 	if calls != 3 {
 		t.Fatalf("expected prototype factory to run during each Resolve, got %d calls", calls)

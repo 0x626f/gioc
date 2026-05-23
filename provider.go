@@ -100,7 +100,7 @@ type Factory[T any] struct {
 }
 
 // NewFactory returns a Factory.
-func NewFactory[T any](injects []Token, constructor func(Injections) (T, error), valueScope Scope) Factory[T] {
+func NewFactory[T any](injects []Token, valueScope Scope, constructor func(Injections) (T, error)) Factory[T] {
 	return Factory[T]{
 		Injects:     injects,
 		ValueScope:  valueScope,

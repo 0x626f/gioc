@@ -13,13 +13,18 @@
 
 <div align="center">
     <h3>A lightweight, type-safe inversion-of-control container for Go.</h3>
-    <h6>Currently under active development and breaking changes are possible</h6>
 </div>
 
 gioc organises dependencies into **modules**, resolves the full dependency graph at startup, and wires every provider in topological order — catching circular dependencies before your application runs.
 
 ```
 go get github.com/0x626f/gioc
+```
+
+Releases are tagged with semantic versioning. Pin a release with:
+
+```bash
+go get github.com/0x626f/gioc@v0.1.0
 ```
 
 ---
@@ -308,7 +313,7 @@ if err := c.Run(); err != nil {
 | Error type | Cause |
 |---|---|
 | `CircularInjectionError` | A cycle was found in the module import graph or the provider dependency graph. |
-| `DependencyError` | A required token is not registered, a constructor returned an error, or an `Injectable` could not be cast to the expected type. |
+| `DependencyError` | A required token is not registered, a constructor returned an error, or an `Injection` could not be cast to the expected type. |
 
 ---
 
