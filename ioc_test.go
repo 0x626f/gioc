@@ -2521,6 +2521,42 @@ func TestInjections_Resolve(t *testing.T) {
 	}
 }
 
+func TestInjections_ResolveMissingTokenReportsScopeTokens(t *testing.T) {
+	injections := Injections{
+		{Token: "Logger", Instance: &Logger{}},
+		{Token: "Database", Instance: &Database{}},
+	}
+
+	_, err := injections.Resolve("Cache")
+	if err == nil {
+		t.Fatal("expected missing injection error")
+	}
+
+	msg := err.Error()
+	if !strings.Contains(msg, "injection Cache is missing in the scope: [Logger Database]") {
+		t.Fatalf("expected scope tokens in error, got %q", msg)
+	}
+	if strings.Contains(msg, "0x") {
+		t.Fatalf("error should not include injection pointer addresses, got %q", msg)
+	}
+}
+
+func TestMissingInjectionReportsNilScopeEntries(t *testing.T) {
+	err := missingInjection("Cache", Injections{
+		{Token: "Logger", Instance: &Logger{}},
+		nil,
+		{Token: "Database", Instance: &Database{}},
+	})
+
+	msg := err.Error()
+	if !strings.Contains(msg, "injection Cache is missing in the scope: [Logger <nil> Database]") {
+		t.Fatalf("expected nil scope entry in error, got %q", msg)
+	}
+	if strings.Contains(msg, "0x") {
+		t.Fatalf("error should not include injection pointer addresses, got %q", msg)
+	}
+}
+
 func TestMustResolve_HappyPath(t *testing.T) {
 	injections := Injections{
 		{Token: "Logger", Instance: &Logger{Prefix: "ok"}},
@@ -2593,6 +2629,34 @@ func TestRequire_MissingToken_Panics(t *testing.T) {
 		}
 	}()
 	Require(injections, "Logger", "Database")
+}
+
+func TestRequire_MissingTokenReportsScopeTokens(t *testing.T) {
+	injections := Injections{
+		{Token: "Logger", Instance: &Logger{}},
+		{Token: "Database", Instance: &Database{}},
+	}
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic for missing token")
+		}
+		err, ok := r.(*DependencyError)
+		if !ok {
+			t.Fatalf("expected DependencyError panic, got %T", r)
+		}
+
+		msg := err.Error()
+		if !strings.Contains(msg, "injection Cache is missing in the scope: [Logger Database]") {
+			t.Fatalf("expected scope tokens in error, got %q", msg)
+		}
+		if strings.Contains(msg, "0x") {
+			t.Fatalf("error should not include injection pointer addresses, got %q", msg)
+		}
+	}()
+
+	injections.Require("Logger", "Cache")
 }
 
 func TestRequire_EmptyInjections_Panics(t *testing.T) {

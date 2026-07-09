@@ -105,9 +105,21 @@ func duplicateModuleToken(token Token) *DependencyError {
 	}
 }
 
+func injectionScope(injections []*Injection) string {
+	tokens := make([]string, 0, len(injections))
+	for _, injection := range injections {
+		if injection == nil {
+			tokens = append(tokens, "<nil>")
+			continue
+		}
+		tokens = append(tokens, injection.Token)
+	}
+	return fmt.Sprintf("[%s]", strings.Join(tokens, " "))
+}
+
 func missingInjection(token Token, injections []*Injection) *DependencyError {
 	return &DependencyError{
-		reason: fmt.Sprintf("injection %s is missing in the scope: %v", token, injections),
+		reason: fmt.Sprintf("injection %s is missing in the scope: %s", token, injectionScope(injections)),
 	}
 }
 
